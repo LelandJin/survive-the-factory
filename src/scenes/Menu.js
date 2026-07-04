@@ -1,74 +1,83 @@
+// Title screen. One tap/click starts the run (and unlocks mobile audio).
 class Menu extends Phaser.Scene {
   constructor() {
-    super("menuScene");
-  }
-
-  preload() {
-    // load audio
-    this.load.audio('switchsound', './assets/sound/Select.wav');
-
-    // load img
-    this.load.image('MENU_img', './assets/page_imgs/menu.png');
+    super('menuScene');
   }
 
   create() {
-    at_MENU_Scene = true;
-    gameOver = true;
+    this.layoutAll();
+    this.onResize = () => this.layoutAll();
+    this.scale.on('resize', this.onResize);
+    this.events.once('shutdown', () => this.scale.off('resize', this.onResize));
 
-    // show menu img
-    this.menu_img = this.add.image(fullpage_x, fullpage_y, 'MENU_img');
-
-    // menu text configuration //! legacy code are commented out and replaced by menu_img 
-    // let menuConfig = {
-    //   fontFamily: 'Courier',
-    //   fontSize: '28px',
-    //   backgroundColor: '#F3B141',
-    //   color: '#843605',
-    //   align: 'right',
-    //   padding: {
-    //     top: 5,
-    //     bottom: 5,
-    //   },
-    //   fixedWidth: 0
-    // }
-
-    // show menu text 
-    // this.add.text(game.config.width / 2, game.config.height / 2 - borderUISize - borderPadding, 'SCUM-2D', menuConfig).setOrigin(0.5);
-    // this.tutorialText = this.add.text(game.config.width / 2, game.config.height / 2, 'Use WSAD to move and mouse to interact\nPress TAB or 1 for inventory\nPress T for Tutorial \
-    // press M or 3 for metabolism UI\nPress Shift to sprint\nPress Q end game\nPress ESC to MENU\nPress F to get item').setOrigin(0.5);
-    // menuConfig.backgroundColor = '#00FF00';
-    // menuConfig.color = '#000';
-    // this.add.text(game.config.width / 2, game.config.height / 2 + borderUISize + borderPadding, 'Press p to play', menuConfig).setOrigin(0.5);
-
-
-    // define keys
-    keyLEFT = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT);
-    keyP = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.P);
-    keyUP = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.UP);
-    keyM = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.M);
-    keyC = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.C);
-    keyT = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.T);
-
+    this.input.once('pointerup', () => this.startGame());
+    this.input.keyboard.once('keydown', () => this.startGame());
   }
 
-  update() {
-    if (Phaser.Input.Keyboard.JustDown(keyP)) {
-      at_MENU_Scene = true;
-      this.sound.play('switchsound');
-      this.scene.start("playScene");
+  startGame() {
+    this.sound.play('sfxSelect', { volume: 0.6 });
+    try {
+      if (!this.sound.get('bgm') && this.cache.audio.exists('bgm')) {
+        this.sound.add('bgm', { loop: true, volume: 0.25 }).play();
+      }
+    } catch (e) { /* no music if the device can't decode it */ }
+    this.scene.start('playScene');
+  }
+
+  layoutAll() {
+    const w = this.scale.width, h = this.scale.height;
+    if (this.everything) this.everything.forEach(o => o.destroy());
+    this.everything = [];
+    const add = o => { this.everything.push(o); return o; };
+
+    // backdrop: a strip of factory floor
+    for (let k = -1; k <= Math.ceil(w / 128) + 1; k++) {
+      add(this.add.image(k * 128, h * 0.78 + (k % 2) * 32, 'world', 'floor' + (Math.abs(k) % 4)).setAlpha(0.5));
+      add(this.add.image(k * 128 + 64, h * 0.78 + 32 - (k % 2) * 32, 'world', 'floor' + (Math.abs(k + 1) % 4)).setAlpha(0.5));
     }
 
-    if (Phaser.Input.Keyboard.JustDown(keyC)) {
-      console.log("Loaded Credit Scene");
-      this.sound.play('switchsound');
-      this.scene.start("creditScene");
+    // cast: survivor flanked by a shambling horde
+    add(this.add.image(w / 2, h * 0.72, 'world', 'shadow').setScale(0.8).setAlpha(0.7));
+    add(this.add.sprite(w / 2, h * 0.7, 'platformer', 'sword'));
+    for (let k = 0; k < 4; k++) {
+      const x = w / 2 + (k < 2 ? -1 : 1) * (90 + (k % 2) * 70);
+      add(this.add.image(x, h * 0.72, 'world', 'shadow').setScale(0.7).setAlpha(0.6));
+      const zed = add(this.add.sprite(x, h * 0.7, 'platformer', 'zombie' + (k * 2 + 1)).setFlipX(k >= 2));
+      this.tweens.add({
+        targets: zed, angle: { from: -5, to: 5 }, duration: 600 + k * 120,
+        yoyo: true, repeat: -1, ease: 'Sine.easeInOut'
+      });
     }
 
-    if (Phaser.Input.Keyboard.JustDown(keyT)) {
-      console.log("Loaded Tutorial Scene");
-      this.sound.play('switchsound');
-      this.scene.start("tutorialScene");
+    const small = Math.min(w, h) < 500;
+    add(this.add.text(w / 2, h * 0.2, 'SURVIVE THE FACTORY', {
+      fontFamily: 'Courier', fontSize: (small ? 30 : 46) + 'px', color: '#ffe14d',
+      stroke: '#000000', strokeThickness: 6, fontStyle: 'bold', align: 'center',
+      wordWrap: { width: w * 0.9 }
+    }).setOrigin(0.5));
+    add(this.add.text(w / 2, h * 0.31, '— realtime 2.5D zombie survival —', {
+      fontFamily: 'Courier', fontSize: (small ? 13 : 17) + 'px', color: '#c7ccd4',
+      stroke: '#000000', strokeThickness: 3
+    }).setOrigin(0.5));
 
-    }
+    add(this.add.text(w / 2, h * 0.43,
+      'Left thumb: move   ·   Right thumb: SWORD / GUN / DASH\n' +
+      'Desktop: WASD + SPACE / E / SHIFT\n' +
+      'Loot chests, eat fruit, level up, survive the waves.',
+      {
+        fontFamily: 'Courier', fontSize: (small ? 11 : 14) + 'px', color: '#8f96a3',
+        stroke: '#000000', strokeThickness: 2, align: 'center', lineSpacing: 6
+      }).setOrigin(0.5));
+
+    const hint = add(this.add.text(w / 2, h * 0.55, 'TAP TO ENTER THE FACTORY', {
+      fontFamily: 'Courier', fontSize: (small ? 18 : 24) + 'px', color: '#ffffff',
+      stroke: '#000000', strokeThickness: 4, fontStyle: 'bold'
+    }).setOrigin(0.5));
+    this.tweens.add({ targets: hint, alpha: 0.25, duration: 600, yoyo: true, repeat: -1 });
+
+    add(this.add.text(w / 2, h - 16,
+      'Leland Jin · Jerry Lin · Lakery Cao  —  CMPM120 (2021) / 2.5D rework (2026)', {
+        fontFamily: 'Courier', fontSize: '11px', color: '#555a63'
+      }).setOrigin(0.5, 1));
   }
 }

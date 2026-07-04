@@ -8,6 +8,19 @@ Spring 2021
 ### Game Description:
 - Paying tribute to [SCUM on Steam](https://store.steampowered.com/app/513710), Survive The Factory is a survival game built on Phaser 3. You are meant to survive as long as possible for the entertainment of tycoons from above:)
 You can read more about the background story of SCUM [here](https://scum-game.fandom.com/wiki/Scum).
+- **v6.0 rework:** the game is now a realtime **2.5D isometric action RPG** (think Diablo) that is fully **playable on phones** — survive endless zombie waves, loot chests, level up, and take down the ROBOT boss every 5th wave.
+
+### How to Play (v6.0):
+- **Phone / tablet:** left thumb anywhere on the left half = virtual joystick; right-thumb buttons: **SWORD** (hold to auto-swing), **GUN** (5-shot fan, cooldown), **DASH** (burst + brief invulnerability). Attacks auto-aim at the nearest zombie.
+- **Desktop:** move with **WASD/arrows**, **SPACE** to swing, **E** to shoot, **SHIFT** to dash.
+- Chests auto-open when you walk up to them; fruit heals, green orbs give XP. Level up to grow HP/damage/speed (at LV4 you find your tactical glasses). The first boss drops **the axe** (+35% damage).
+
+### Architecture (v6.0):
+- `src/scenes/Boot.js` — asset loading + procedural canvas texture atlas (iso floor tiles, wall/crate/machine cubes, fx, touch controls)
+- `src/scenes/Play.js` — iso map generation, y-based depth sorting, arcade physics, waves/boss, melee/gun/dash combat, loot & XP
+- `src/scenes/UI.js` — HUD overlay: floating joystick, skill buttons with cooldowns, Diablo-style health orb, XP bar, banners, death screen
+- `src/prefabs/Player.js`, `Zombie.js`, `Item.js` — realtime entities
+- No build step: `python3 -m http.server` and open on any device.
 
 ### Links:
 - [Public GitHub repository](https://github.com/jerrylin4real/survive-the-factory)
@@ -23,6 +36,14 @@ You can read more about the background story of SCUM [here](https://scum-game.fa
   
 ---
 ### Patch Notes:
+
+`Patch v6.0 (Realtime 2.5D mobile rework):`
+- Rebuilt as a realtime 2.5D isometric ARPG playable on phones
+- Procedurally generated isometric factory floor with depth-sorted walls, crates and machines
+- Virtual joystick + multitouch skill buttons (sword / gun / dash) with auto-aim
+- Endless zombie waves, ROBOT boss every 5th wave, XP/levels, loot drops, chests
+- Diablo-style health orb, XP bar, floating damage numbers, death/retry screen
+- Responsive layout for portrait & landscape; keyboard still supported on desktop
 
 `Patch v0.5 (Final Game):`
 - Hours taken: 

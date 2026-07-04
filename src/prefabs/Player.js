@@ -1,164 +1,186 @@
-class Player extends Phaser.GameObjects.Sprite {
-    constructor(scene, x, y, texture, frame) {
-        super(scene, x, y, texture, frame);
-        scene.add.existing(this);   // add to existing, displayList, updateList
-        //! Translate variable to main.js as var(s), like what Leland did with player_exhausted 
-        this.hunger = 0; // character dies after their hunger reaches 100 for 7 days or 7 minutes
-        this.thrist = 0; // character dies after their thrist reaches 100 for 3 days or 3 minutes
+// The survivor. A realtime action hero: walks/runs via joystick or WASD,
+// swings a sword, dodges, fires a scavenged gun, levels up Diablo-style.
+class Player extends Phaser.Physics.Arcade.Sprite {
+    constructor(scene, x, y) {
+        super(scene, x, y, 'platformer', 'stand');
+        scene.add.existing(this);
+        scene.physics.add.existing(this);
 
-        // Unavailiable for sprint 2
-        //this.famePoint = 0;
+        this.setOrigin(0.5, 0.92);            // origin at the feet for 2.5D depth sorting
+        this.body.setCircle(14, 45 / 2 - 14, 78 * 0.92 - 14);
 
-        // this.kcal_intake = 2500;
-        // this.kcal_usage = 2500;
-        // this.target_percentage = this.kcal_intake * 100 / this.kcal_usage;
+        // stats
+        this.level = 1;
+        this.xp = 0;
+        this.xpNext = 50;
+        this.maxHp = 100;
+        this.hp = this.maxHp;
+        this.atk = 16;
+        this.speed = 240;
 
-        // Digestion Variables
-        // Unavailiable for sprint 2
+        // realtime state
+        this.alive = true;
+        this.facing = new Phaser.Math.Vector2(1, 0);
+        this.moveVec = new Phaser.Math.Vector2(0, 0);
+        this.attackCd = 0;
+        this.gunCd = 0;
+        this.dashCd = 0;
+        this.attackCdMax = 420;
+        this.gunCdMax = 4000;
+        this.dashCdMax = 1500;
+        this.dashTime = 0;
+        this.iframes = 0;
+        this.poseTime = 0;                    // time left showing attack/gun pose
+        this.poseFrame = null;
+        this.animTimer = 0;
+        this.animStep = 0;
 
-        // volumes below are in percentage
-        player_stomach_volume = 0;
-        player_bladder_volume = 0;
-
-        // this.intestine_volume = 0;
-        // this.colon_volume = 0;
-
-
-
-        // Level UP milestones:  [lvl0, lvl1, lvl2, ...]
-        health_lvl = 0;
-        this.health_milestone = [100, 120, 140, 160, 180, 200];
-        restoredhealth = 0;
-        this.max_health = this.health_milestone[health_lvl];
-        player_hp = this.max_health; // init hp match
-
-        stamina_lvl = 0;
-        this.stamina_milestone = [500, 1000, 1500, 2000, 2500, 3000, 3500, 4000];
-        this.max_stamina = this.stamina_milestone[stamina_lvl];
-        player_stamina = this.max_stamina;
-        this.restoredstamina = 0;
-
-        this.riverSpeedDebuff = 0;
-        this.walkspeed = 30 + stamina_lvl + this.riverSpeedDebuff; // pixels per frame, will move faster for higher stamina lvl 
-        //!walkspeed was 3
-        this.runspeed = this.walkspeed * 2;
-
-
-        //!fixme for final sprint [optional]
-        hunger_lvl = 0;
-        this.hunger_milestone = [100, 125, 150, 175, 200];
-        this.max_hunger = this.hunger_milestone[hunger_lvl];
-
-        // hunger will reduce current stamina
-        // movement will + hunger
-        // will die if reached 100 for 7 min
-
-        thrist_lvl = 0;
-        this.thrist_milestone = [100, 125, 150, 175, 200];
-        this.max_thrist = this.thrist_milestone[thrist_lvl];
-
-        // thrist will reduce current stamina
-        // movement will + thrist
-        // will die if reached 100 for 3 min
-
-
-        this.width = 10;
-        this.height = 10;
+        this.shadow = scene.add.image(x, y, 'world', 'shadow')
+            .setScale(0.7).setAlpha(0.8).setDepth(STF.DEPTH.SHADOW);
     }
 
+    // frame prefix: at level 4+ the survivor finds their tactical glasses
+    fp(name) {
+        return (this.level >= 4 ? 'glasses-' : '') + name;
+    }
 
-    update() {
+    update(time, delta) {
+        if (!this.alive) return;
 
-        // upload player stat to global variable
-        if (player_hp <= 0 || player_hunger >= 100 || player_thrist >= 100) { //!use simple hunger condition for now
-            player_hp = 0;
-            player_dead = true;
-            gameOver = true;
+        this.attackCd = Math.max(0, this.attackCd - delta);
+        this.gunCd = Math.max(0, this.gunCd - delta);
+        this.dashCd = Math.max(0, this.dashCd - delta);
+        this.iframes = Math.max(0, this.iframes - delta);
+        this.poseTime = Math.max(0, this.poseTime - delta);
+
+        // movement (screen-space; vertical squashed for the iso feel)
+        const v = this.moveVec;
+        const dashing = this.dashTime > time;
+        const spd = this.speed * (dashing ? 3.1 : 1);
+        if (v.lengthSq() > 0.01) {
+            const n = v.clone().normalize();
+            this.setVelocity(n.x * spd, n.y * spd * 0.62);
+            this.facing.copy(n);
+        } else if (!dashing) {
+            this.setVelocity(0, 0);
         }
 
-        //* make sure player stat is within range
-        if (player_hp > this.max_health) {
-            player_hp = this.max_health;
+        this.updateSprite(delta, v.lengthSq() > 0.01);
+
+        this.shadow.setPosition(this.x, this.y + 2);
+        this.setDepth(this.y);
+    }
+
+    updateSprite(delta, moving) {
+        // pose (attack / shoot) overrides walk frames briefly
+        if (this.poseTime > 0 && this.poseFrame) {
+            this.setFrame(this.fp(this.poseFrame));
+            this.setFlipX(this.facing.x > 0.05);
+            return;
         }
-
-        if (player_thrist > this.max_thrist) {
-            player_thrist = this.max_thrist;
+        if (!moving) {
+            this.setFrame(this.fp('stand'));
+            return;
         }
-
-        if (player_thrist < 0) { // no negative thrist
-            player_thrist = 0;
+        this.animTimer += delta;
+        if (this.animTimer > 150) {
+            this.animTimer = 0;
+            this.animStep ^= 1;
         }
-
-        if (player_hunger < 0) { // no negative hunger
-            player_hunger = 0;
-        }
-
-        if (player_bladder_volume < 0) {
-            player_bladder_volume = 0;
-        }
-
-        if (player_bladder_volume >= 100) {
-            player_bladder_volume = 100;
-            pee = true;
-        }
-
-        
-        if (player_stomach_volume >= 100) {
-            player_stomach_volume = 100;
-            poo = true;
-        }
-
-        this.max_stamina = this.stamina_milestone[stamina_lvl];
-
-        //update speed
-        this.walkspeed = 3 + stamina_lvl + this.riverSpeedDebuff; // pixels per frame, will move faster for higher stamina lvl //!speed was 3
-        this.runspeed = this.walkspeed * 2;
-
-        if (player_stamina <= 0 && !player_exhausted) {
-            player_stamina = 0; // avoid negative stamina# to be bug-free
-            console.log("player exhausted");
-
-            // apply penalties
-            player_hp -= 30; //!was 10
-            player_thrist += 10;
-            player_hunger += 6;
-            player_exhausted = true;
-        }
-
-        if (player_stamina < player_stamina / 5) {
-            //!fixme add sound/text warning @ 1/5 lvl before exhuased; example: send boolean to UI
-            //console.log("stamina: " + player_stamina);
-        }
-        //*** stamina level mechanism
-        if (player_stamina < this.max_stamina && !player_exhausted) {
-            player_stamina += 1;
-            this.restoredstamina += 1; //! not calculated by the timer in UI.js
-            if (stamina_lvl < this.stamina_milestone.length - 1 && this.restoredstamina / 2 >= this.stamina_milestone[stamina_lvl]) {
-                stamina_lvl += 1;
-                this.restoredstamina = 0;
-
-                console.log("stamina_lvl up to " + stamina_lvl);
-            }
-        }
-
-        //*** hp level mechanism
-        if (player_hp < this.max_health) {
-            // if restored health:
-            // restoredhealth += 1; done in UI.js
-            if (health_lvl < this.health_milestone.length - 1 && restoredhealth * 5 >= this.health_milestone[health_lvl]) {
-                health_lvl += 1;
-                restoredhealth = 0;
-                console.log("health_lvl up to " + health_lvl);
-            }
-        }
-
-        if (nearRiver) {
-            this.riverSpeedDebuff = -2;
+        if (Math.abs(this.facing.x) >= Math.abs(this.facing.y) * 0.7) {
+            this.setFrame(this.fp(this.animStep ? 'leftright2' : 'leftright'));
+            this.setFlipX(this.facing.x > 0);
         } else {
-            this.riverSpeedDebuff = 0;
-
+            this.setFrame(this.fp(this.animStep ? 'updown2' : 'updown'));
+            this.setFlipX(false);
         }
+    }
 
+    tryAttack() {
+        if (!this.alive || this.attackCd > 0) return false;
+        this.attackCd = this.attackCdMax;
+        this.poseTime = 220;
+        this.poseFrame = 'sword';
+        const angle = this.scene.getAimAngle(this);
+        this.facing.setToPolar(angle, 1);
+        this.scene.playerMelee(angle);
+        return true;
+    }
+
+    tryGun() {
+        if (!this.alive || this.gunCd > 0) return false;
+        this.gunCd = this.gunCdMax;
+        this.poseTime = 320;
+        this.poseFrame = 'holdgun2';
+        const angle = this.scene.getAimAngle(this);
+        this.facing.setToPolar(angle, 1);
+        this.scene.playerGun(angle);
+        return true;
+    }
+
+    tryDash() {
+        if (!this.alive || this.dashCd > 0) return false;
+        this.dashCd = this.dashCdMax;
+        this.dashTime = this.scene.time.now + 170;
+        this.iframes = Math.max(this.iframes, 380);
+        const n = this.moveVec.lengthSq() > 0.01 ? this.moveVec.clone().normalize() : this.facing;
+        this.setVelocity(n.x * this.speed * 3.1, n.y * this.speed * 3.1 * 0.62);
+        this.scene.sound.play('sfxSwish', { volume: 0.5 });
+        this.scene.tweens.add({ targets: this, alpha: 0.45, duration: 90, yoyo: true });
+        return true;
+    }
+
+    takeDamage(dmg) {
+        if (!this.alive || this.iframes > 0) return;
+        this.iframes = 500;
+        this.hp -= dmg;
+        this.setTintFill(0xff4444);
+        this.scene.time.delayedCall(110, () => this.clearTint());
+        this.scene.cameras.main.shake(120, 0.006);
+        this.scene.sound.play('sfxHurt', { volume: 0.5 });
+        if (this.hp <= 0) {
+            this.hp = 0;
+            this.die();
+        }
+    }
+
+    heal(amount) {
+        if (!this.alive) return;
+        this.hp = Math.min(this.maxHp, this.hp + amount);
+    }
+
+    gainXp(amount) {
+        if (!this.alive) return;
+        this.xp += amount;
+        while (this.xp >= this.xpNext) {
+            this.xp -= this.xpNext;
+            this.levelUp();
+        }
+    }
+
+    levelUp() {
+        this.level += 1;
+        this.xpNext = Math.floor(50 * Math.pow(this.level, 1.4));
+        this.maxHp += 16;
+        this.atk += 5;
+        this.speed = Math.min(300, this.speed + 4);
+        this.hp = Math.min(this.maxHp, this.hp + Math.floor(this.maxHp * 0.5));
+        this.scene.sound.play('sfxLevel', { volume: 0.5 });
+        this.scene.spawnDamageText(this.x, this.y - 90, 'LEVEL UP!', '#ffe14d', 24);
+        this.scene.burstFx(this.x, this.y - 30, 0xffe14d, 14);
+    }
+
+    die() {
+        this.alive = false;
+        this.setVelocity(0, 0);
+        this.setFrame(this.fp('stand'));
+        this.scene.tweens.add({
+            targets: this,
+            angle: 90,
+            alpha: 0.6,
+            duration: 500,
+            ease: 'Quad.easeIn'
+        });
+        this.scene.onPlayerDead();
     }
 }
-
