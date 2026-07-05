@@ -23,9 +23,11 @@ You can read more about the background story of SCUM [here](https://scum-game.fa
 - No build step: `python3 -m http.server` and open on any device.
 
 ### Links:
-- [Public GitHub repository](https://github.com/jerrylin4real/survive-the-factory)
+- **[▶ PLAY NOW (works on your phone!)](https://lelandjin.github.io/survive-the-factory/)**
 
-- [GitHub page/Playable link](https://jerrylin4real.github.io/survive-the-factory/)
+- [Public GitHub repository](https://github.com/LelandJin/survive-the-factory)
+
+- [Original 2021 repository / GitHub page](https://github.com/jerrylin4real/survive-the-factory)
 
 - [Group Google drive](https://drive.google.com/drive/folders/1LB6Vdx5lpXOuZgMV4hXCGnVQgUnjNuvu?usp=sharing)
 
