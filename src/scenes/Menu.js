@@ -62,8 +62,9 @@ class Menu extends Phaser.Scene {
 
     add(this.add.text(w / 2, h * 0.43,
       'Left thumb: move   ·   Right thumb: SWORD / GUN / DASH\n' +
-      'Desktop: WASD + SPACE / E / SHIFT\n' +
-      'Loot chests, eat fruit, level up, survive the waves.',
+      'A LOOT / DRINK button appears at chests and rivers\n' +
+      'Desktop: WASD + SPACE / E / SHIFT / F,  M = metabolism\n' +
+      'Eat, drink, mind your bladder... and survive the waves.',
       {
         fontFamily: 'Courier', fontSize: (small ? 11 : 14) + 'px', color: '#8f96a3',
         stroke: '#000000', strokeThickness: 2, align: 'center', lineSpacing: 6

@@ -1,5 +1,6 @@
 // The survivor. A realtime action hero: walks/runs via joystick or WASD,
-// swings a sword, dodges, fires a scavenged gun, levels up Diablo-style.
+// swings a sword, dodges, fires a scavenged gun, levels up Diablo-style —
+// and, faithful to SCUM, has a metabolism to manage.
 class Player extends Phaser.Physics.Arcade.Sprite {
     constructor(scene, x, y) {
         super(scene, x, y, 'platformer', 'stand');
@@ -18,6 +19,17 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.atk = 16;
         this.speed = 240;
 
+        // metabolism (all 0..100)
+        this.hunger = 10;      // rises over time; at 100 you starve
+        this.thirst = 15;      // rises faster; at 100 you dehydrate
+        this.stomach = 0;      // eating fills it; at 100 nature forces a stop
+        this.bladder = 0;      // drinking fills it; same deal
+        this.busy = false;     // relieving: can't move/fight, vulnerable
+        this.busyUntil = 0;
+        this.busyText = null;
+        this.relieveType = null;
+        this.relieveForced = false;
+
         // realtime state
         this.alive = true;
         this.facing = new Phaser.Math.Vector2(1, 0);
@@ -30,7 +42,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.dashCdMax = 1500;
         this.dashTime = 0;
         this.iframes = 0;
-        this.poseTime = 0;                    // time left showing attack/gun pose
+        this.poseTime = 0;
         this.poseFrame = null;
         this.animTimer = 0;
         this.animStep = 0;
@@ -53,10 +65,21 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.iframes = Math.max(0, this.iframes - delta);
         this.poseTime = Math.max(0, this.poseTime - delta);
 
+        this.updateMetabolism(time, delta);
+
+        if (this.busy) {
+            this.setVelocity(0, 0);
+            if (time >= this.busyUntil) this.finishRelieve();
+            this.shadow.setPosition(this.x, this.y + 2);
+            this.setDepth(this.y);
+            return;
+        }
+
         // movement (screen-space; vertical squashed for the iso feel)
         const v = this.moveVec;
         const dashing = this.dashTime > time;
-        const spd = this.speed * (dashing ? 3.1 : 1);
+        const riverDrag = this.scene.inRiver(this.x, this.y) ? 0.62 : 1;
+        const spd = this.speed * (dashing ? 3.1 : 1) * riverDrag;
         if (v.lengthSq() > 0.01) {
             const n = v.clone().normalize();
             this.setVelocity(n.x * spd, n.y * spd * 0.62);
@@ -71,8 +94,75 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.setDepth(this.y);
     }
 
+    // ---------------------------------------------------- metabolism ----
+
+    updateMetabolism(time, delta) {
+        const dt = delta / 1000;
+        this.hunger = Math.min(100, this.hunger + 0.24 * dt);
+        this.thirst = Math.min(100, this.thirst + 0.42 * dt);
+
+        // starving / dehydrating drains HP
+        if (this.hunger >= 100) this.hp -= 2 * dt;
+        if (this.thirst >= 100) this.hp -= 3 * dt;
+        if (this.hp <= 0) { this.hp = 0; this.die(); return; }
+
+        // a full bladder/stomach stops you in your tracks — mid-horde if unlucky
+        if (!this.busy) {
+            if (this.bladder >= 100) this.startRelieve('pee', true);
+            else if (this.stomach >= 100) this.startRelieve('poo', true);
+        }
+    }
+
+    eat(heal) {
+        if (!this.alive) return;
+        this.hp = Math.min(this.maxHp, this.hp + heal);
+        this.hunger = Math.max(0, this.hunger - heal * 0.9);
+        this.stomach = Math.min(100, this.stomach + heal * 0.45);
+    }
+
+    drink() {
+        if (!this.alive || this.busy) return;
+        this.thirst = Math.max(0, this.thirst - 26);
+        this.bladder = Math.min(100, this.bladder + 22);
+        this.scene.sound.play('sfxEat', { volume: 0.5 });
+        this.scene.spawnDamageText(this.x, this.y - 90, '+H2O', '#57c7ff', 16);
+    }
+
+    startRelieve(type, forced) {
+        if (!this.alive || this.busy) return;
+        if (!forced && (type === 'pee' ? this.bladder : this.stomach) < 15) return;
+        this.busy = true;
+        this.relieveType = type;
+        this.relieveForced = forced;
+        this.busyUntil = this.scene.time.now + 2600;
+        this.setVelocity(0, 0);
+        this.setFrame(this.fp('stand'));
+        const label = forced ? 'NATURE CALLS!' : (type === 'pee' ? 'peeing...' : 'pooping...');
+        this.busyText = this.scene.add.text(this.x, this.y - 100, label, {
+            fontFamily: 'Courier', fontSize: '15px', color: forced ? '#ff5c40' : '#c7ccd4',
+            stroke: '#000000', strokeThickness: 3, fontStyle: 'bold'
+        }).setOrigin(0.5).setDepth(70000);
+        this.scene.tweens.add({ targets: this, alpha: 0.75, duration: 300, yoyo: true, repeat: 3 });
+    }
+
+    finishRelieve() {
+        this.busy = false;
+        if (this.busyText) { this.busyText.destroy(); this.busyText = null; }
+        if (this.relieveType === 'pee') this.bladder = 0;
+        else this.stomach = 0;
+        if (this.relieveForced) {
+            // holding it to the last second has a price (2021 tradition)
+            this.hp = Math.max(1, this.hp - 15);
+            this.scene.spawnDamageText(this.x, this.y - 90, 'OOPS -15', '#ff5c40', 18);
+        } else {
+            this.scene.spawnDamageText(this.x, this.y - 90, 'relief!', '#7cf58a', 14);
+        }
+        this.setAlpha(1);
+    }
+
+    // -------------------------------------------------------- sprite ----
+
     updateSprite(delta, moving) {
-        // pose (attack / shoot) overrides walk frames briefly
         if (this.poseTime > 0 && this.poseFrame) {
             this.setFrame(this.fp(this.poseFrame));
             this.setFlipX(this.facing.x > 0.05);
@@ -96,8 +186,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
     }
 
+    // -------------------------------------------------------- combat ----
+
     tryAttack() {
-        if (!this.alive || this.attackCd > 0) return false;
+        if (!this.alive || this.busy || this.attackCd > 0) return false;
         this.attackCd = this.attackCdMax;
         this.poseTime = 220;
         this.poseFrame = 'sword';
@@ -108,7 +200,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     tryGun() {
-        if (!this.alive || this.gunCd > 0) return false;
+        if (!this.alive || this.busy || this.gunCd > 0) return false;
         this.gunCd = this.gunCdMax;
         this.poseTime = 320;
         this.poseFrame = 'holdgun2';
@@ -119,10 +211,13 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     tryDash() {
-        if (!this.alive || this.dashCd > 0) return false;
+        if (!this.alive || this.busy || this.dashCd > 0) return false;
         this.dashCd = this.dashCdMax;
         this.dashTime = this.scene.time.now + 170;
         this.iframes = Math.max(this.iframes, 380);
+        // sprinting works up an appetite
+        this.hunger = Math.min(100, this.hunger + 1.2);
+        this.thirst = Math.min(100, this.thirst + 1.6);
         const n = this.moveVec.lengthSq() > 0.01 ? this.moveVec.clone().normalize() : this.facing;
         this.setVelocity(n.x * this.speed * 3.1, n.y * this.speed * 3.1 * 0.62);
         this.scene.sound.play('sfxSwish', { volume: 0.5 });
@@ -142,11 +237,6 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             this.hp = 0;
             this.die();
         }
-    }
-
-    heal(amount) {
-        if (!this.alive) return;
-        this.hp = Math.min(this.maxHp, this.hp + amount);
     }
 
     gainXp(amount) {
@@ -171,7 +261,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     die() {
+        if (!this.alive) return;
         this.alive = false;
+        if (this.busyText) { this.busyText.destroy(); this.busyText = null; }
         this.setVelocity(0, 0);
         this.setFrame(this.fp('stand'));
         this.scene.tweens.add({

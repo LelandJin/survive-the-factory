@@ -16,6 +16,9 @@ class Boot extends Phaser.Scene {
 
         this.load.path = './assets/';
         this.load.atlas('platformer', 'player-and-food.png', 'player-and-food.json');
+        // the 2021 hand-painted map, downscaled to stay under mobile GPU
+        // texture caps (rendered at 2x tile scale, repeats across the world)
+        this.load.image('mainmap', 'map/SCUM-MAP-2560.png');
 
         this.load.audio('bgm', 'sound/scumbgm.mp3');
         this.load.audio('sfxSelect', 'sound/Select.wav');
@@ -154,6 +157,11 @@ class Boot extends Phaser.Scene {
         ctx.fillStyle = 'rgba(255,255,255,0.13)';
         for (let r = 0; r < 3; r++) ctx.fillRect(14 + r * 18, 64 + 70 + r * 9, 3, 3);
         tex.add('wall', 0, 0, 64, TW, 160);
+
+        // --- light concrete wall block (for extruding walls over the
+        //     painted 2021 map — tint only darkens, so this starts bright) ---
+        cube(400, 64, TW, 96, '#d3dbe6', '#aeb8c5', '#939daa', 'rgba(0,0,0,0.25)');
+        tex.add('wallLight', 0, 400, 64, TW, 160);
 
         // --- crate (96 x 120) ---
         cube(140, 64, 96, 72, '#8a6a42', '#6e5232', '#594127', 'rgba(0,0,0,0.4)');

@@ -1,4 +1,37 @@
-// The factory floor: realtime 2.5D (isometric, depth-sorted) survival combat.
+// The original SCUM factory map, made realtime 2.5D: painted ground plane,
+// extruded walls on the 2021 building footprints, depth-sorted entities,
+// waves of zombies, loot, rivers and metabolism.
+
+// The 5120px map art tiles twice horizontally — all 2021 coordinates preserved.
+const WORLD = { LEFT: 15, TOP: 1378, RIGHT: 9980, BOTTOM: 5085 };
+
+// wall segments relative to a building's top-left corner: [x, y, w, h]
+const SMALL_BUILDING_SEGS = [
+    [0, 0, 569, 12], [0, 805, 569, 12],                                   // top / bottom
+    [0, 12, 12, 95], [0, 207, 12, 163], [0, 400, 12, 157], [0, 656, 12, 149], // left, door gaps
+    [557, 12, 12, 95], [557, 656, 12, 149],                               // right, wide entrance
+    [214, 215, 12, 160], [214, 435, 12, 128],                             // interior vertical
+    [56, 223, 170, 12], [56, 400, 170, 12]                                // interior rooms
+];
+const BIG_BUILDING_SEGS = [
+    [0, 0, 2127, 14],
+    [0, 1652, 830, 14], [1350, 1652, 777, 14],                            // bottom, main entrance gap
+    [0, 14, 14, 1638], [2113, 14, 14, 1638],                              // left / right
+    [70, 100, 1971, 14],                                                  // top corridor
+    [75, 1190, 746, 12], [1361, 1190, 689, 12],                           // interior with center gap
+    [847, 1202, 12, 450]
+];
+const SMALL_BUILDINGS = [[100, 1580], [5224, 1585]];
+const BIG_BUILDINGS = [[2845, 2997], [7960, 2997]];
+
+// the 2021 river rectangles (walk-through, slows you, drinkable)
+const RIVERS = [
+    { x: 1300, y: 1345, w: 300, h: 2400 },
+    { x: 32, y: 3355, w: 1380, h: 390 },
+    { x: 6437, y: 1345, w: 263, h: 2400 },
+    { x: 5072, y: 3415, w: 1410, h: 345 }
+];
+
 class Play extends Phaser.Scene {
     constructor() {
         super('playScene');
@@ -16,15 +49,15 @@ class Play extends Phaser.Scene {
         this.elapsed = 0;
         this.uiMove = new Phaser.Math.Vector2(0, 0);
         this.attackHeld = false;
+        this.contextAction = null;     // {type:'loot'|'drink', target}
+        this.drinkCd = 0;
 
-        const b = isoBounds();
-        this.physics.world.setBounds(b.x, b.y, b.width, b.height);
+        this.physics.world.setBounds(WORLD.LEFT, WORLD.TOP,
+            WORLD.RIGHT - WORLD.LEFT, WORLD.BOTTOM - WORLD.TOP);
 
-        this.buildMap();
+        this.buildWorld();
 
-        // player at the center of the diamond
-        const c = isoToWorld(STF.GRID / 2, STF.GRID / 2);
-        this.player = new Player(this, c.x, c.y);
+        this.player = new Player(this, 4990, 2750);
         this.player.setCollideWorldBounds(true);
 
         // groups
@@ -59,9 +92,10 @@ class Play extends Phaser.Scene {
             gravityY: 200
         });
 
-        // camera
+        // camera: bound a little above the play area so the painted
+        // mountains/sunset show as a backdrop near the top edge
         const cam = this.cameras.main;
-        cam.setBounds(b.x - 80, b.y - 120, b.width + 160, b.height + 240);
+        cam.setBounds(0, 400, WORLD.RIGHT, WORLD.BOTTOM - 400 + 90);
         cam.startFollow(this.player, false, 0.12, 0.12);
         this.applyZoom();
         this.onResize = () => this.applyZoom();
@@ -70,12 +104,10 @@ class Play extends Phaser.Scene {
 
         // keyboard (desktop fallback)
         this.cursors = this.input.keyboard.createCursorKeys();
-        this.keys = this.input.keyboard.addKeys('W,A,S,D,E,SPACE,SHIFT');
+        this.keys = this.input.keyboard.addKeys('W,A,S,D,E,F,SPACE,SHIFT');
 
-        // HUD runs as an overlay scene
         if (!this.scene.isActive('uiScene')) this.scene.launch('uiScene');
 
-        // first wave after a breather
         this.nextWaveAt = this.time.now + 3500;
         this.waveTimer = this.time.delayedCall(3500, () => this.startWave());
     }
@@ -85,92 +117,110 @@ class Play extends Phaser.Scene {
         this.cameras.main.setZoom(Phaser.Math.Clamp(Math.min(w, h) / 720 + 0.35, 0.8, 1.2));
     }
 
-    // ---------------------------------------------------------- map ----
+    // ---------------------------------------------------------- world ----
 
-    buildMap() {
-        const G = STF.GRID;
-        // 0 floor, 1 border wall, 2 crate, 3 machine, 4 spawn pad
-        const grid = [];
-        for (let i = 0; i < G; i++) {
-            grid[i] = [];
-            for (let j = 0; j < G; j++) {
-                grid[i][j] = (i === 0 || j === 0 || i === G - 1 || j === G - 1) ? 1 : 0;
-            }
-        }
+    buildWorld() {
+        // painted 2021 map as the ground plane (texture repeats 2x across)
+        this.add.tileSprite(0, 0, WORLD.RIGHT, 5120, 'mainmap')
+            .setOrigin(0, 0).setTileScale(2).setDepth(STF.DEPTH.FLOOR);
 
-        const mid = G / 2;
-        const clear = (i, j, r) => Math.abs(i - mid) <= r && Math.abs(j - mid) <= r;
-
-        // zombie spawn pads
-        this.spawnPads = [];
-        const pads = [[3, 3], [G - 4, 3], [3, G - 4], [G - 4, G - 4], [mid, 2], [2, mid]];
-        for (const [pi, pj] of pads) {
-            grid[pi][pj] = 4;
-            this.spawnPads.push(isoToWorld(pi, pj));
-        }
-
-        // machine clusters (assembly lines)
-        const rng = new Phaser.Math.RandomDataGenerator([String(Date.now())]);
-        for (let n = 0; n < 6; n++) {
-            const ci = rng.between(5, G - 8);
-            const cj = rng.between(5, G - 8);
-            if (clear(ci, cj, 5)) continue;
-            const horiz = rng.frac() < 0.5;
-            const len = rng.between(2, 4);
-            for (let k = 0; k < len; k++) {
-                const i = ci + (horiz ? k : 0), j = cj + (horiz ? 0 : k);
-                if (grid[i][j] === 0 && !clear(i, j, 4)) grid[i][j] = 3;
-            }
-        }
-        // scattered crates
-        for (let n = 0; n < 26; n++) {
-            const i = rng.between(2, G - 3), j = rng.between(2, G - 3);
-            if (grid[i][j] === 0 && !clear(i, j, 3)) grid[i][j] = 2;
-        }
-
-        // render + physics
         this.walls = this.physics.add.staticGroup();
-        const addBlocker = (x, y, w, h) => {
-            const r = this.add.rectangle(x, y, w, h, 0, 0);
-            this.walls.add(r);
+
+        const extrude = (bx, by, segs, tint, scale) => {
+            for (const [sx, sy, sw, sh] of segs) {
+                const x = bx + sx, y = by + sy;
+                // one physics body per segment
+                this.walls.add(this.add.rectangle(x + sw / 2, y + sh / 2, sw + 14, sh + 14, 0, 0));
+                // extruded cubes along the segment give the 2.5D height
+                const step = Math.round(120 * scale);
+                if (sw >= sh) {
+                    const baseY = y + sh + 22;
+                    for (let cx = x + 34; cx < x + sw + 20; cx += step) {
+                        this.add.image(cx, baseY, 'world', 'wallLight')
+                            .setOrigin(0.5, 1).setScale(scale).setTint(tint).setDepth(baseY);
+                    }
+                } else {
+                    for (let cy = y + 26; cy < y + sh + 20; cy += Math.round(46 * scale / 0.6)) {
+                        const baseY = cy + 22;
+                        this.add.image(x + sw / 2, baseY, 'world', 'wallLight')
+                            .setOrigin(0.5, 1).setScale(scale).setTint(tint).setDepth(baseY);
+                    }
+                }
+            }
         };
 
-        for (let i = 0; i < G; i++) {
-            for (let j = 0; j < G; j++) {
-                const t = grid[i][j];
-                const p = isoToWorld(i, j);
-                const baseY = p.y + STF.TILE_H / 2;
+        for (const [bx, by] of SMALL_BUILDINGS) extrude(bx, by, SMALL_BUILDING_SEGS, 0xffffff, 0.62);
+        for (const [bx, by] of BIG_BUILDINGS) extrude(bx, by, BIG_BUILDING_SEGS, 0x8a939e, 0.6);
 
-                if (t !== 1) {
-                    const fr = t === 4 ? 'hazard'
-                        : (rng.frac() < 0.1 ? 'floorGrate' : 'floor' + rng.between(0, 3));
-                    this.add.image(p.x, p.y, 'world', fr).setDepth(STF.DEPTH.FLOOR);
-                }
-                if (t === 1) {
-                    this.add.image(p.x, baseY, 'world', 'wall').setOrigin(0.5, 1).setDepth(baseY);
-                    addBlocker(p.x, p.y, 104, 54);
-                } else if (t === 2) {
-                    this.add.image(p.x, baseY - 8, 'world', 'crate').setOrigin(0.5, 1).setDepth(baseY - 8);
-                    addBlocker(p.x, p.y, 74, 40);
-                } else if (t === 3) {
-                    this.add.image(p.x, baseY, 'world', 'machine').setOrigin(0.5, 1).setDepth(baseY);
-                    addBlocker(p.x, p.y, 104, 54);
-                }
+        // machine row inside each big building (the 2021 blocked strip)
+        for (const [bx, by] of BIG_BUILDINGS) {
+            for (let k = 0; k < 3; k++) {
+                const mx = bx + 1378, my = by + 1300 + k * 145;
+                this.add.image(mx, my, 'world', 'machine')
+                    .setOrigin(0.5, 1).setScale(0.85).setDepth(my);
+            }
+            this.walls.add(this.add.rectangle(bx + 1378, by + 1230 + 205, 110, 420, 0, 0));
+        }
+
+        // chests at the original 2021 locations, fridges included
+        const chestSpots = [
+            [8657, 3134, false], [9945, 5061, false], [3831, 3766, true],
+            [431, 2193, true], [4003, 1463, false]
+        ];
+        this.chests = chestSpots.map(([x, y, fridge]) => new Chest(this, x, y, fridge));
+
+        // the axe easter egg, where it always was
+        this.axeDrop = null;
+        this.time.delayedCall(50, () => {
+            this.axeDrop = this.spawnLoot(9711, 3486, { frame: 'futou', special: 'axe' });
+            this.axeDrop.noDespawn = true;
+        });
+
+        // zombie spawn pads scattered over the grass
+        this.spawnPads = [
+            { x: 900, y: 4300 }, { x: 2400, y: 2000 }, { x: 4400, y: 2400 },
+            { x: 5700, y: 4400 }, { x: 7300, y: 2100 }, { x: 9300, y: 3800 },
+            { x: 1900, y: 4600 }, { x: 8600, y: 4600 }
+        ];
+        for (const p of this.spawnPads) {
+            this.add.image(p.x, p.y, 'world', 'hazard').setDepth(STF.DEPTH.FLOOR + 1).setAlpha(0.9);
+        }
+    }
+
+    inRiver(x, y) {
+        for (const r of RIVERS) {
+            if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) return true;
+        }
+        return false;
+    }
+
+    // ------------------------------------------------- context action ----
+
+    updateContextAction() {
+        const p = this.player;
+        this.contextAction = null;
+        if (!p.alive || p.busy) return;
+        for (const chest of this.chests) {
+            if (!chest.opened &&
+                Phaser.Math.Distance.Between(p.x, p.y, chest.x, chest.y) < 95) {
+                this.contextAction = { type: 'loot', target: chest };
+                return;
             }
         }
-
-        // chests with supplies
-        this.chests = [];
-        let placed = 0, guard = 0;
-        while (placed < 5 && guard++ < 200) {
-            const i = rng.between(4, G - 5), j = rng.between(4, G - 5);
-            if (grid[i][j] !== 0 || clear(i, j, 3)) continue;
-            grid[i][j] = 9;
-            const p = isoToWorld(i, j);
-            this.chests.push(new Chest(this, p.x, p.y, placed % 2 === 1));
-            placed++;
+        if (this.inRiver(p.x, p.y) && this.drinkCd <= 0) {
+            this.contextAction = { type: 'drink' };
         }
-        this.grid = grid;
+    }
+
+    doContextAction() {
+        const act = this.contextAction;
+        if (!act || this.gameOver) return;
+        if (act.type === 'loot') {
+            act.target.open();
+        } else if (act.type === 'drink') {
+            this.drinkCd = 900;
+            this.player.drink();
+        }
     }
 
     // ------------------------------------------------------- combat ----
@@ -269,9 +319,17 @@ class Play extends Phaser.Scene {
     }
 
     spawnZombie(isBoss) {
-        const pad = Phaser.Utils.Array.GetRandom(this.spawnPads);
-        const x = pad.x + Phaser.Math.Between(-50, 50);
-        const y = pad.y + Phaser.Math.Between(-25, 25);
+        // spawn from a pad near (but not on top of) the player, so the
+        // action stays close on the huge map
+        const p = this.player;
+        const sorted = this.spawnPads
+            .map(pad => ({ pad, d: Phaser.Math.Distance.Between(p.x, p.y, pad.x, pad.y) }))
+            .filter(e => e.d > 500)
+            .sort((a, b) => a.d - b.d);
+        const pick = Phaser.Utils.Array.GetRandom(sorted.slice(0, 3)).pad;
+
+        const x = pick.x + Phaser.Math.Between(-60, 60);
+        const y = pick.y + Phaser.Math.Between(-30, 30);
         this.burstFx(x, y - 20, 0x59d95e, 8);
         const z = new Zombie(this, x, y, this.wave, isBoss);
         this.zombies.add(z);
@@ -292,7 +350,6 @@ class Play extends Phaser.Scene {
             this.cameras.main.shake(300, 0.01);
             this.spawnLoot(z.x - 30, z.y, { frame: 'food', heal: 55 });
             this.spawnLoot(z.x + 30, z.y, { frame: 'food', heal: 55 });
-            if (!this.haveAxe) this.spawnLoot(z.x, z.y + 24, { frame: 'futou', special: 'axe' });
         } else {
             this.sound.play('sfxKill', { volume: 0.18 });
             const roll = Math.random();
@@ -325,7 +382,7 @@ class Play extends Phaser.Scene {
             this.sound.play('sfxBlip', { volume: 0.35 });
             this.spawnDamageText(drop.x, drop.y - 40, '+' + drop.xpAmount + ' XP', '#59d95e', 14);
         } else {
-            this.player.heal(drop.heal);
+            this.player.eat(drop.heal);
             this.sound.play('sfxEat', { volume: 0.5 });
             this.spawnDamageText(drop.x, drop.y - 40, '+' + drop.heal, '#7cf58a', 16);
         }
@@ -336,7 +393,6 @@ class Play extends Phaser.Scene {
         this.gameOver = true;
         if (this.spawnEvent) this.spawnEvent.remove();
         if (this.waveTimer) this.waveTimer.remove();
-        // record the best run
         try {
             const best = JSON.parse(localStorage.getItem('stf-best') || '{}');
             if (!best.kills || this.kills > best.kills) {
@@ -353,6 +409,7 @@ class Play extends Phaser.Scene {
         const p = this.player;
 
         if (!this.gameOver) this.elapsed = (time - this.startTime) / 1000;
+        this.drinkCd = Math.max(0, this.drinkCd - delta);
 
         // merge joystick + keyboard movement
         let mx = this.uiMove.x, my = this.uiMove.y;
@@ -365,15 +422,9 @@ class Play extends Phaser.Scene {
         if (this.attackHeld || this.keys.SPACE.isDown) p.tryAttack();
         if (Phaser.Input.Keyboard.JustDown(this.keys.SHIFT)) p.tryDash();
         if (Phaser.Input.Keyboard.JustDown(this.keys.E)) p.tryGun();
+        if (Phaser.Input.Keyboard.JustDown(this.keys.F)) this.doContextAction();
 
         p.update(time, delta);
-
-        // auto-open chests on approach
-        for (const chest of this.chests) {
-            if (!chest.opened &&
-                Phaser.Math.Distance.Between(p.x, p.y, chest.x, chest.y) < 75) {
-                chest.open();
-            }
-        }
+        this.updateContextAction();
     }
 }

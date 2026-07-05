@@ -72,6 +72,19 @@ class UI extends Phaser.Scene {
         this.btnDash.on('pointerdown', () => { this.play.player.tryDash(); });
         this.dashShade = this.add.image(0, 0, 'world', 'btn').setTint(0x000000).setAlpha(0.55).setDepth(22).setVisible(false);
 
+        // --- context action button (LOOT / DRINK — the mobile "F key") ---
+        this.ctxBtn = this.makeButton(0.95, 0xd8f7c8).setVisible(false);
+        this.ctxIcon = this.add.image(0, 0, 'platformer', 'baoxiang').setScale(0.75).setDepth(21).setVisible(false);
+        this.ctxLabel = this.add.text(0, 0, '', {
+            fontFamily: 'Courier', fontSize: '13px', color: '#ffffff',
+            stroke: '#000000', strokeThickness: 3, fontStyle: 'bold'
+        }).setOrigin(0.5, 0).setDepth(21).setVisible(false);
+        this.ctxBtn.on('pointerdown', () => { this.play.doContextAction(); });
+        this.tweens.add({
+            targets: this.ctxBtn, scale: { from: 0.95, to: 1.05 },
+            duration: 500, yoyo: true, repeat: -1
+        });
+
         // --- health orb (Diablo style) ---
         this.orbR = 42;
         this.orbBg = this.add.graphics().setDepth(20);
@@ -91,6 +104,25 @@ class UI extends Phaser.Scene {
         // --- XP bar ---
         this.xpBg = this.add.image(0, 0, 'world', 'px').setTint(0x101418).setOrigin(0, 0.5).setDepth(20).setAlpha(0.85);
         this.xpFill = this.add.image(0, 0, 'world', 'px').setTint(0x59d95e).setOrigin(0, 0.5).setDepth(21);
+
+        // --- hunger / thirst mini-meters under the orb ---
+        const meterLabel = { fontFamily: 'Courier', fontSize: '10px', color: '#8f96a3', stroke: '#000000', strokeThickness: 2, fontStyle: 'bold' };
+        this.hungerLbl = this.add.text(0, 0, 'FOOD', meterLabel).setOrigin(1, 0.5).setDepth(21);
+        this.hungerBg = this.add.image(0, 0, 'world', 'px').setTint(0x101418).setOrigin(0, 0.5).setDepth(20).setAlpha(0.85);
+        this.hungerFill = this.add.image(0, 0, 'world', 'px').setTint(0xe07b1f).setOrigin(0, 0.5).setDepth(21);
+        this.thirstLbl = this.add.text(0, 0, 'H2O', meterLabel).setOrigin(1, 0.5).setDepth(21);
+        this.thirstBg = this.add.image(0, 0, 'world', 'px').setTint(0x101418).setOrigin(0, 0.5).setDepth(20).setAlpha(0.85);
+        this.thirstFill = this.add.image(0, 0, 'world', 'px').setTint(0x3fa7e0).setOrigin(0, 0.5).setDepth(21);
+
+        // --- metabolism panel (tap the M button or press M) ---
+        this.metaOpen = false;
+        this.metaBtn = this.add.text(0, 0, 'M', {
+            fontFamily: 'Courier', fontSize: '22px', color: '#c7ccd4',
+            stroke: '#000000', strokeThickness: 3, fontStyle: 'bold'
+        }).setOrigin(0.5).setDepth(30).setInteractive({ useHandCursor: true });
+        this.metaBtn.on('pointerdown', () => this.toggleMetabolism());
+        this.input.keyboard.on('keydown-M', () => this.toggleMetabolism());
+        this.buildMetabolismPanel();
 
         // --- top-right info ---
         const info = { fontFamily: 'Courier', fontSize: '15px', color: '#c7ccd4', stroke: '#000000', strokeThickness: 3, align: 'right' };
@@ -127,6 +159,53 @@ class UI extends Phaser.Scene {
             .setInteractive({ useHandCursor: true });
     }
 
+    // ------------------------------------------------ metabolism panel ----
+
+    buildMetabolismPanel() {
+        this.metaPanel = this.add.container(0, 0).setDepth(35).setVisible(false);
+        const bg = this.add.rectangle(0, 0, 240, 240, 0x0c0f14, 0.92).setOrigin(0.5).setStrokeStyle(2, 0x3c3f45);
+        const title = this.add.text(0, -102, 'METABOLISM', {
+            fontFamily: 'Courier', fontSize: '16px', color: '#ffe14d',
+            stroke: '#000000', strokeThickness: 3, fontStyle: 'bold'
+        }).setOrigin(0.5);
+        this.metaPanel.add([bg, title]);
+
+        this.metaBars = {};
+        const rows = [
+            ['hunger', 'HUNGER', 0xe07b1f, -68],
+            ['thirst', 'THIRST', 0x3fa7e0, -34],
+            ['stomach', 'STOMACH', 0xb9884f, 0],
+            ['bladder', 'BLADDER', 0xf5e642, 34]
+        ];
+        for (const [key, label, tint, y] of rows) {
+            const lbl = this.add.text(-104, y, label, {
+                fontFamily: 'Courier', fontSize: '12px', color: '#c7ccd4',
+                stroke: '#000000', strokeThickness: 2
+            }).setOrigin(0, 0.5);
+            const barBg = this.add.image(-14, y, 'world', 'px').setTint(0x101418).setOrigin(0, 0.5).setDisplaySize(114, 12);
+            const bar = this.add.image(-13, y, 'world', 'px').setTint(tint).setOrigin(0, 0.5).setDisplaySize(1, 8);
+            this.metaBars[key] = bar;
+            this.metaPanel.add([lbl, barBg, bar]);
+        }
+
+        // manual relieve buttons — go when it's safe, not when nature decides
+        const btnStyle = {
+            fontFamily: 'Courier', fontSize: '13px', color: '#ffffff',
+            backgroundColor: '#243040', padding: { left: 8, right: 8, top: 5, bottom: 5 }, fontStyle: 'bold'
+        };
+        this.peeBtn = this.add.text(-58, 82, 'PEE', btnStyle).setOrigin(0.5).setInteractive({ useHandCursor: true });
+        this.pooBtn = this.add.text(58, 82, 'POO', btnStyle).setOrigin(0.5).setInteractive({ useHandCursor: true });
+        this.peeBtn.on('pointerdown', () => this.play.player.startRelieve('pee', false));
+        this.pooBtn.on('pointerdown', () => this.play.player.startRelieve('poo', false));
+        this.metaPanel.add([this.peeBtn, this.pooBtn]);
+    }
+
+    toggleMetabolism() {
+        this.metaOpen = !this.metaOpen;
+        this.metaPanel.setVisible(this.metaOpen);
+        this.sound.play('sfxSelect', { volume: 0.4 });
+    }
+
     layout() {
         const w = this.scale.width, h = this.scale.height;
         const m = Math.min(w, h) < 500 ? 0.85 : 1;   // shrink controls a bit on small phones
@@ -140,6 +219,11 @@ class UI extends Phaser.Scene {
         this.btnDash.setPosition(w - 88 * m, h - 212 * m).setScale(0.85 * m);
         this.dashLabel.setPosition(this.btnDash.x, this.btnDash.y);
         this.dashShade.setPosition(this.btnDash.x, this.btnDash.y);
+
+        // context action button sits between joystick zone and skill cluster
+        this.ctxBtn.setPosition(w - 205 * m, h - 258 * m);
+        this.ctxIcon.setPosition(this.ctxBtn.x, this.ctxBtn.y);
+        this.ctxLabel.setPosition(this.ctxBtn.x, this.ctxBtn.y + 56 * m);
 
         // orb, top-left
         const ox = 66, oy = 66, r = this.orbR;
@@ -155,6 +239,15 @@ class UI extends Phaser.Scene {
         this.hpText.setPosition(ox, oy + 6);
         this.lvlText.setPosition(ox, oy + r + 16);
 
+        // hunger/thirst meters under the orb
+        const my0 = oy + r + 34;
+        this.hungerLbl.setPosition(ox - 6, my0);
+        this.hungerBg.setPosition(ox, my0).setDisplaySize(72, 9);
+        this.hungerFill.setPosition(ox + 1, my0).setDisplaySize(1, 5);
+        this.thirstLbl.setPosition(ox - 6, my0 + 15);
+        this.thirstBg.setPosition(ox, my0 + 15).setDisplaySize(72, 9);
+        this.thirstFill.setPosition(ox + 1, my0 + 15).setDisplaySize(1, 5);
+
         // xp bar, top center
         const bw = Math.min(w * 0.45, 420);
         this.xpBarW = bw;
@@ -164,6 +257,8 @@ class UI extends Phaser.Scene {
         this.waveText.setPosition(w - 16, 12);
         this.statText.setPosition(w - 16, 38);
         this.muteBtn.setPosition(w - 30, 96);
+        this.metaBtn.setPosition(w - 30, 136);
+        this.metaPanel.setPosition(w / 2, h * 0.42);
         this.banner.setPosition(w / 2, h * 0.32);
 
         if (this.deadPanel) this.layoutDeath();
@@ -202,6 +297,44 @@ class UI extends Phaser.Scene {
         this.gunShade.setVisible(gunFrac > 0).setScale(0.85 * Math.max(0.01, gunFrac));
         const dashFrac = p.dashCd / p.dashCdMax;
         this.dashShade.setVisible(dashFrac > 0).setScale(0.85 * Math.max(0.01, dashFrac));
+
+        // hunger / thirst meters (flash when critical)
+        this.hungerFill.displayWidth = Math.max(1, 70 * p.hunger / 100);
+        this.thirstFill.displayWidth = Math.max(1, 70 * p.thirst / 100);
+        const flash = (Math.floor(this.time.now / 300) % 2) === 0;
+        this.hungerFill.setAlpha(p.hunger > 80 && flash ? 0.35 : 1);
+        this.thirstFill.setAlpha(p.thirst > 80 && flash ? 0.35 : 1);
+
+        // context action button (LOOT / DRINK)
+        const act = play.contextAction;
+        if (act && !this.deadShown) {
+            this.ctxBtn.setVisible(true);
+            this.ctxIcon.setVisible(true);
+            this.ctxLabel.setVisible(true);
+            if (act.type === 'loot') {
+                this.ctxIcon.setTexture('platformer', act.target.fridge ? 'bingxiang' : 'baoxiang').setScale(0.7);
+                this.ctxLabel.setText('LOOT');
+                this.ctxBtn.setTint(0xd8f7c8);
+            } else {
+                this.ctxIcon.setTexture('platformer', 'xigua').setScale(0.7);
+                this.ctxLabel.setText('DRINK');
+                this.ctxBtn.setTint(0xc8e4f7);
+            }
+        } else {
+            this.ctxBtn.setVisible(false);
+            this.ctxIcon.setVisible(false);
+            this.ctxLabel.setVisible(false);
+        }
+
+        // metabolism panel bars
+        if (this.metaOpen) {
+            this.metaBars.hunger.displayWidth = Math.max(1, 112 * p.hunger / 100);
+            this.metaBars.thirst.displayWidth = Math.max(1, 112 * p.thirst / 100);
+            this.metaBars.stomach.displayWidth = Math.max(1, 112 * p.stomach / 100);
+            this.metaBars.bladder.displayWidth = Math.max(1, 112 * p.bladder / 100);
+            this.peeBtn.setAlpha(p.bladder >= 15 && !p.busy ? 1 : 0.4);
+            this.pooBtn.setAlpha(p.stomach >= 15 && !p.busy ? 1 : 0.4);
+        }
 
         // wave banner
         if (play.wave !== this.lastWave) {
