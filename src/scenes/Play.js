@@ -1,886 +1,379 @@
-// Main scene carrying out the game
+// The factory floor: realtime 2.5D (isometric, depth-sorted) survival combat.
 class Play extends Phaser.Scene {
     constructor() {
-        super("playScene");
-
-        // display score
-
-        this.scoreConfig = {
-            fontFamily: 'Courier',
-            fontSize: '28px',
-            backgroundColor: '#F3B141',
-            color: '#843605',
-            align: 'right',
-            padding: {  // set the size of the display box
-                top: 5,
-                bottom: 5,
-            },
-            fixedWidth: 100
-        }
+        super('playScene');
     }
-
-    preload() {
-        console.log("preload");
-
-        // load images/tile sprites
-        this.load.image('mainmap', './assets/map/SCUM-MAP.png'); // Not showing the full img? Default: mainmap.png 
-        // load audio
-        this.load.audio('bgm', './assets/sound/scumbgm.mp3');
-        this.load.audio('switchsound', './assets/sound/Select.wav');
-        this.load.audio('nevergonna', './assets/sound/whistle_never_gonna_give_u_up.mp3');
-        this.load.audio('hihat', './assets/sound/hihat.wav');
-        this.load.audio('bass', './assets/sound/bass.wav');
-        this.load.audio('snare', './assets/sound/snare.wav');
-
-
-
-        // load atlas animation
-        this.load.path = './assets/';
-        this.load.atlas('platformer', 'player-and-food.png', 'player-and-food.json');
-
-    }
-    // Note: The keyword 'this' refers to the class 'Play'
-
 
     create() {
-        console.log("create");
+        // run state
+        this.gameOver = false;
+        this.wave = 0;
+        this.kills = 0;
+        this.aliveCount = 0;
+        this.pendingSpawns = 0;
+        this.haveAxe = false;
+        this.startTime = this.time.now;
+        this.elapsed = 0;
+        this.uiMove = new Phaser.Math.Vector2(0, 0);
+        this.attackHeld = false;
 
-        // initialize global variables
-        gameOver = false;
-        at_MENU_Scene = false;
-        nearChest = false;
-        player_exhausted = false;
-        haveAxe = false;
+        const b = isoBounds();
+        this.physics.world.setBounds(b.x, b.y, b.width, b.height);
 
-        // Scene-level variables
+        this.buildMap();
 
-        this.bgmPlayed = false;
-        this.bgmCreated = false;
-        this.hasted = false;
-        this.superWeaponRewarded = false;
-        this.openedMetabolism = false;
+        // player at the center of the diamond
+        const c = isoToWorld(STF.GRID / 2, STF.GRID / 2);
+        this.player = new Player(this, c.x, c.y);
+        this.player.setCollideWorldBounds(true);
 
-        // Add time counters
-        this.hasteCounter = 0; // Increase ships' movespeed if >= 30.
-        this.superWeaponCount = 0;
-        init_countdown = 600;
-        init_exhausted_countdown = init_countdown; // 6 seconds cd for exhausted status penalty 
-        exhausted_countdown = init_exhausted_countdown;
+        // groups
+        this.zombies = this.physics.add.group({ runChildUpdate: true });
+        this.bullets = this.physics.add.group();
+        this.loot = this.physics.add.group();
 
-        // place tile sprite
-        this.mainmap = this.add.tileSprite(0, 0, 9999, 9999, 'mainmap').setOrigin(0, 0);
-
-        // * Spawn player randomly in the world(x, y)
-        this.init_spawn_x = Phaser.Math.Between(borderLimitUp_x, borderLimitDown_x);; //!was 62
-        this.init_spawn_y = Phaser.Math.Between(borderLimitUp_y, borderLimitDown_y);; //!was 1510
-
-        // this.init_spawn_x = 8657; //!was 62
-        // this.init_spawn_y = 3134; //!was 1510
-
-        this.player1 = new Player(this, this.init_spawn_x, this.init_spawn_y, 'platformer', 'stand').setScale(1); // scale the size of this.player1
-        player1 = this.player1;
-        // this.player1.body.setSize(20, 55, 0) // usage: setSize(width, height, center)
-
-        //*** add camera
-        // Set the camera bounds
-        this.cameras.main.setBounds(0, 0, borderLimitDown_x + borderUISize * 1.9, borderLimitDown_y + borderUISize * 0.9);
-        this.cameras.main.setZoom(1);
-        //Set the camera to follow this.player1
-        this.cameras.main.startFollow(this.player1);
-
-        // * add chests
-        //chest1 location(8657,3134)
-        this.chest1 = new Item(this, 8657, 3134, 'platformer', 'baoxiang').setScale(1);
-        this.chest1.name = "chest";
-
-        //chest2 location(9945,5061)
-        this.chest2 = new Item(this, 9945, 5061, 'platformer', 'baoxiang').setScale(1);
-        this.chest2.name = "chest";
-
-        //chest3 location(3831,3766)
-        this.chest3 = new Item(this, 3831, 3766, 'platformer', 'bingxiang').setScale(1); // fridge
-        this.chest3.name = "chest";
-
-        //chest4 location(431,2193)
-        this.chest4 = new Item(this, 431, 2193, 'platformer', 'bingxiang').setScale(1);
-        this.chest4.name = "chest";
-
-        //chest5 location(4003,1463)
-        this.chest5 = new Item(this, 4003, 1463, 'platformer', 'baoxiang').setScale(1);
-        this.chest5.name = "chest";
-
-        // push chests to chestList
-        chestList = [this.chest1, this.chest2, this.chest3, this.chest4, this.chest5];
-
-        console.log("chestList[0].stock:" + chestList[0].stock + " @(" + chestList[0].x + ", " + chestList[0].y);
-        console.log("chestList[1].stock:" + chestList[1].stock + " @(" + chestList[1].x + ", " + chestList[1].y);
-        console.log("chestList[2].stock:" + chestList[2].stock + " @(" + chestList[2].x + ", " + chestList[2].y);
-        console.log("chestList[3].stock:" + chestList[3].stock + " @(" + chestList[3].x + ", " + chestList[3].y);
-        console.log("chestList[4].stock:" + chestList[4].stock + " @(" + chestList[4].x + ", " + chestList[4].y);
-
-        //!add easter eggs
-        //axe location: x:9711 y:3486
-        this.axe = new Item(this, 9711, 3486, 'platformer', 'futou').setScale(1);
-        this.axe.name = "axe";
-
-        //! * add zombies 
-
-
-        // follow style switch buttons
-        /*btn0 = game.add.button(6, 40, 'button', lockonFollow, this, 0, 0, 0);
-        btn1 = game.add.button(6, 120, 'button', platformerFollow, this, 1, 1, 1);
-        btn2 = game.add.button(6, 200, 'button', topdownFollow, this, 2, 2, 2);
-        btn3 = game.add.button(6, 280, 'button', topdownTightFollow, this, 3, 3, 3);
-        */
-
-        // define key control
-        keyF = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F);
-        keyR = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.R);
-        keyLEFT = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT);
-        keyRIGHT = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT);
-        keyUP = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.UP);
-        keyDOWN = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN);
-        keyW = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W);
-        keyS = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S);
-        keyShift = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SHIFT);
-        keyA = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A);
-        keyD = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D);
-        keyQ = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.Q);
-        keyV = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.V);
-        keyESC = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
-        keyM = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.M);
-        keyTAB = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.TAB);
-        keyL = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.L); // show player location on console.log
-        keyT = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.T);
-        keyI = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.I);
-        key1 = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ONE);
-        key3 = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.THREE);
-        key4 = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.FOUR);
-
-        keyH = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.H);
-        keyK = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.K);
-        keyJ = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.J);
-        keyP = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.P);
-
-
-
-        // animation config
-        this.anims.create({
-            key: 'walkleft',
-            defaultTextureKey: 'platformer',
-            frames: [
-                { frame: 'walkleft' }
-            ],
-            repeat: -1
+        // colliders
+        this.physics.add.collider(this.player, this.walls);
+        this.physics.add.collider(this.zombies, this.walls);
+        this.physics.add.collider(this.zombies, this.zombies);
+        this.physics.add.collider(this.player, this.zombies);
+        this.physics.add.collider(this.bullets, this.walls, (bullet) => this.popBullet(bullet));
+        this.physics.add.overlap(this.bullets, this.zombies, (bullet, z) => {
+            if (z.dead || !bullet.active) return;
+            const fromX = bullet.x - bullet.body.velocity.x;
+            const fromY = bullet.y - bullet.body.velocity.y;
+            this.popBullet(bullet);
+            z.takeDamage(bullet.dmg, fromX, fromY, false);
         });
-        this.anims.create({
-            key: 'walkright',
-            defaultTextureKey: 'platformer',
-            frames: [
-                { frame: 'walkright' }
-            ],
-            repeat: -1
-        });
-        this.anims.create({
-            key: 'go-up',
-            defaultTextureKey: 'platformer',
-            frames: this.anims.generateFrameNames('platformer', {
-                prefix: 'go-up',
-                start: 1,
-                end: 2,
-                suffix: '',
-                zeroPad: 2
-            }),
-        });
-        this.anims.create({
-            key: 'go-down',
-            defaultTextureKey: 'platformer',
-            frames: this.anims.generateFrameNames('platformer', {
-                prefix: 'go-down',
-                start: 1,
-                end: 2,
-                suffix: '',
-                zeroPad: 2
-            }),
-        });
-        this.anims.create({
-            key: 'stand',
-            defaultTextureKey: 'platformer',
-            frames: [
-                { frame: 'stand' }
-            ],
-            repeat: -1
+        this.physics.add.overlap(this.player, this.loot, (p, drop) => this.pickupLoot(drop));
+
+        // particles
+        const particles = this.add.particles('world');
+        particles.setDepth(60000);
+        this.burstEmitter = particles.createEmitter({
+            frame: 'spark',
+            on: false,
+            speed: { min: 60, max: 240 },
+            lifespan: 420,
+            scale: { start: 1.2, end: 0 },
+            gravityY: 200
         });
 
-        this.anims.create({
-            key: 'baoxiang2',
-            defaultTextureKey: 'platformer',
-            frames: [
-                { frame: 'baoxiang2' }
-            ],
-            repeat: -1
-        });
+        // camera
+        const cam = this.cameras.main;
+        cam.setBounds(b.x - 80, b.y - 120, b.width + 160, b.height + 240);
+        cam.startFollow(this.player, false, 0.12, 0.12);
+        this.applyZoom();
+        this.onResize = () => this.applyZoom();
+        this.scale.on('resize', this.onResize);
+        this.events.once('shutdown', () => this.scale.off('resize', this.onResize));
 
-        this.anims.create({
-            key: 'bingxiang',
-            defaultTextureKey: 'platformer',
-            frames: [
-                { frame: 'bingxiang' }
-            ],
-            repeat: -1
-        });
+        // keyboard (desktop fallback)
+        this.cursors = this.input.keyboard.createCursorKeys();
+        this.keys = this.input.keyboard.addKeys('W,A,S,D,E,SPACE,SHIFT');
 
-        this.anims.create({
-            key: 'food',
-            defaultTextureKey: 'platformer',
-            frames: [
-                { frame: 'food' }
-            ],
-            repeat: -1
-        });
+        // HUD runs as an overlay scene
+        if (!this.scene.isActive('uiScene')) this.scene.launch('uiScene');
 
-        this.anims.create({
-            key: 'taozi',
-            defaultTextureKey: 'platformer',
-            frames: [
-                { frame: 'taozi' }
-            ],
-            repeat: -1
-        });
+        // first wave after a breather
+        this.nextWaveAt = this.time.now + 3500;
+        this.waveTimer = this.time.delayedCall(3500, () => this.startWave());
+    }
 
-        this.anims.create({
-            key: 'yingtao',
-            defaultTextureKey: 'platformer',
-            frames: [
-                { frame: 'yingtao' }
-            ],
-            repeat: -1
-        });
+    applyZoom() {
+        const w = this.scale.width, h = this.scale.height;
+        this.cameras.main.setZoom(Phaser.Math.Clamp(Math.min(w, h) / 720 + 0.35, 0.8, 1.2));
+    }
 
-        this.anims.create({
-            key: 'xigua',
-            defaultTextureKey: 'platformer',
-            frames: [
-                { frame: 'xigua' }
-            ],
-            repeat: -1
-        });
+    // ---------------------------------------------------------- map ----
 
-        this.anims.create({
-            key: 'huolongguo',
-            defaultTextureKey: 'platformer',
-            frames: [
-                { frame: 'huolongguo' }
-            ],
-            repeat: -1
-        });
-
-
-
-        // initialize score
-        this.p1Score = 0;
-        // display text
-
-        let redConfig = {
-            color: 'red', // color hex code: black
-            fixedWidth: 150
+    buildMap() {
+        const G = STF.GRID;
+        // 0 floor, 1 border wall, 2 crate, 3 machine, 4 spawn pad
+        const grid = [];
+        for (let i = 0; i < G; i++) {
+            grid[i] = [];
+            for (let j = 0; j < G; j++) {
+                grid[i][j] = (i === 0 || j === 0 || i === G - 1 || j === G - 1) ? 1 : 0;
+            }
         }
 
-        // clear GAME OVER flag
+        const mid = G / 2;
+        const clear = (i, j, r) => Math.abs(i - mid) <= r && Math.abs(j - mid) <= r;
 
-        // play clock
-        this.scoreConfig.fixedWidth = 0;
+        // zombie spawn pads
+        this.spawnPads = [];
+        const pads = [[3, 3], [G - 4, 3], [3, G - 4], [G - 4, G - 4], [mid, 2], [2, mid]];
+        for (const [pi, pj] of pads) {
+            grid[pi][pj] = 4;
+            this.spawnPads.push(isoToWorld(pi, pj));
+        }
 
-        // super weapon indicator
-        //this.superWeaponText = this.add.text(440, borderUISize + borderPadding + 40, 'Superweapon(V): ' + this.superWeaponCount);
-        /*
-        this.clock = this.time.delayedCall(game.settings.gameTimer, () => {
-            this.add.text(game.config.width / 2, game.config.height / 2, 'GAME OVER', this.scoreConfig).setOrigin(0.5);
-            this.add.text(game.config.width / 2, game.config.height / 2 + 64, 'Press (R) to Restart or (ESC) to Menu', this.scoreConfig).setOrigin(0.5);
-            gameOver = true;
-        }, null, this);
-        */
-        // play background music 
-        if (!this.bgmPlayed) {
-            if (this.bgmCreated) {
-                this.bgm.resume();
+        // machine clusters (assembly lines)
+        const rng = new Phaser.Math.RandomDataGenerator([String(Date.now())]);
+        for (let n = 0; n < 6; n++) {
+            const ci = rng.between(5, G - 8);
+            const cj = rng.between(5, G - 8);
+            if (clear(ci, cj, 5)) continue;
+            const horiz = rng.frac() < 0.5;
+            const len = rng.between(2, 4);
+            for (let k = 0; k < len; k++) {
+                const i = ci + (horiz ? k : 0), j = cj + (horiz ? 0 : k);
+                if (grid[i][j] === 0 && !clear(i, j, 4)) grid[i][j] = 3;
             }
-            this.bgm = this.sound.add('bgm', {
-                mute: false,
-                volume: 0.3,
-                rate: 1,
-                loop: true,
-                delay: 0
-            });
-            this.bgmCreated = true;
-            this.bgm.play();
+        }
+        // scattered crates
+        for (let n = 0; n < 26; n++) {
+            const i = rng.between(2, G - 3), j = rng.between(2, G - 3);
+            if (grid[i][j] === 0 && !clear(i, j, 3)) grid[i][j] = 2;
+        }
+
+        // render + physics
+        this.walls = this.physics.add.staticGroup();
+        const addBlocker = (x, y, w, h) => {
+            const r = this.add.rectangle(x, y, w, h, 0, 0);
+            this.walls.add(r);
+        };
+
+        for (let i = 0; i < G; i++) {
+            for (let j = 0; j < G; j++) {
+                const t = grid[i][j];
+                const p = isoToWorld(i, j);
+                const baseY = p.y + STF.TILE_H / 2;
+
+                if (t !== 1) {
+                    const fr = t === 4 ? 'hazard'
+                        : (rng.frac() < 0.1 ? 'floorGrate' : 'floor' + rng.between(0, 3));
+                    this.add.image(p.x, p.y, 'world', fr).setDepth(STF.DEPTH.FLOOR);
+                }
+                if (t === 1) {
+                    this.add.image(p.x, baseY, 'world', 'wall').setOrigin(0.5, 1).setDepth(baseY);
+                    addBlocker(p.x, p.y, 104, 54);
+                } else if (t === 2) {
+                    this.add.image(p.x, baseY - 8, 'world', 'crate').setOrigin(0.5, 1).setDepth(baseY - 8);
+                    addBlocker(p.x, p.y, 74, 40);
+                } else if (t === 3) {
+                    this.add.image(p.x, baseY, 'world', 'machine').setOrigin(0.5, 1).setDepth(baseY);
+                    addBlocker(p.x, p.y, 104, 54);
+                }
+            }
+        }
+
+        // chests with supplies
+        this.chests = [];
+        let placed = 0, guard = 0;
+        while (placed < 5 && guard++ < 200) {
+            const i = rng.between(4, G - 5), j = rng.between(4, G - 5);
+            if (grid[i][j] !== 0 || clear(i, j, 3)) continue;
+            grid[i][j] = 9;
+            const p = isoToWorld(i, j);
+            this.chests.push(new Chest(this, p.x, p.y, placed % 2 === 1));
+            placed++;
+        }
+        this.grid = grid;
+    }
+
+    // ------------------------------------------------------- combat ----
+
+    getAimAngle(player) {
+        let best = null, bestD = 420;
+        this.zombies.children.iterate(z => {
+            if (!z || z.dead) return;
+            const d = Phaser.Math.Distance.Between(player.x, player.y, z.x, z.y);
+            if (d < bestD) { bestD = d; best = z; }
+        });
+        if (best) return Math.atan2(best.y - player.y, best.x - player.x);
+        return Math.atan2(player.facing.y, player.facing.x);
+    }
+
+    playerMelee(angle) {
+        const p = this.player;
+        this.sound.play('sfxSwish', { volume: 0.4 });
+        const sx = p.x + Math.cos(angle) * 48;
+        const sy = p.y - 30 + Math.sin(angle) * 30;
+        const slash = this.add.image(sx, sy, 'world', 'slash')
+            .setRotation(angle).setDepth(p.y + 1).setAlpha(0.9).setScale(0.7).setTint(0xfff2c0);
+        this.tweens.add({
+            targets: slash, alpha: 0, scale: 1.2, duration: 160,
+            onComplete: () => slash.destroy()
+        });
+
+        const range = 115, arc = 1.4;
+        this.zombies.children.iterate(z => {
+            if (!z || z.dead) return;
+            const d = Phaser.Math.Distance.Between(p.x, p.y, z.x, z.y);
+            if (d > range + (z.isBoss ? 30 : 0)) return;
+            const a = Math.atan2(z.y - p.y, z.x - p.x);
+            if (Math.abs(Phaser.Math.Angle.Wrap(a - angle)) > arc) return;
+            const crit = Math.random() < 0.15;
+            const dmg = Math.round(p.atk * (0.85 + Math.random() * 0.3) * (crit ? 2 : 1) * (this.haveAxe ? 1.35 : 1));
+            z.takeDamage(dmg, p.x, p.y, crit);
+            this.burstFx(z.x, z.y - 40, 0xcc2222, 6);
+        });
+    }
+
+    playerGun(angle) {
+        const p = this.player;
+        this.sound.play('sfxShot', { volume: 0.4 });
+        for (let k = -2; k <= 2; k++) {
+            const a = angle + k * 0.12;
+            const bullet = this.bullets.create(p.x + Math.cos(a) * 24, p.y - 12 + Math.sin(a) * 16, 'world', 'bullet');
+            bullet.setDepth(p.y + 2);
+            bullet.body.setCircle(10, 2, 2);
+            bullet.dmg = 22 + p.level * 4;
+            bullet.setVelocity(Math.cos(a) * 640, Math.sin(a) * 640 * 0.62);
+            this.time.delayedCall(750, () => { if (bullet.active) this.popBullet(bullet); });
+        }
+    }
+
+    popBullet(bullet) {
+        if (!bullet.active) return;
+        this.burstFx(bullet.x, bullet.y, 0xffb428, 4);
+        bullet.destroy();
+    }
+
+    burstFx(x, y, tint, count) {
+        this.burstEmitter.setTint(tint);
+        this.burstEmitter.explode(count, x, y);
+    }
+
+    spawnDamageText(x, y, txt, color, size) {
+        const t = this.add.text(x + Phaser.Math.Between(-12, 12), y, txt, {
+            fontFamily: 'Courier', fontSize: size + 'px', color: color,
+            stroke: '#000000', strokeThickness: 3, fontStyle: 'bold'
+        }).setOrigin(0.5).setDepth(70000);
+        this.tweens.add({
+            targets: t, y: y - 46, alpha: 0, duration: 700, ease: 'Quad.easeOut',
+            onComplete: () => t.destroy()
+        });
+    }
+
+    // -------------------------------------------------------- waves ----
+
+    startWave() {
+        if (this.gameOver) return;
+        this.wave += 1;
+        const isBossWave = this.wave % 5 === 0;
+        const count = Math.min(3 + this.wave * 2, 24);
+        this.pendingSpawns = count + (isBossWave ? 1 : 0);
+
+        this.spawnEvent = this.time.addEvent({
+            delay: 400,
+            repeat: this.pendingSpawns - 1,
+            callback: () => {
+                this.pendingSpawns -= 1;
+                const boss = isBossWave && this.pendingSpawns === 0;
+                this.spawnZombie(boss);
+            }
+        });
+    }
+
+    spawnZombie(isBoss) {
+        const pad = Phaser.Utils.Array.GetRandom(this.spawnPads);
+        const x = pad.x + Phaser.Math.Between(-50, 50);
+        const y = pad.y + Phaser.Math.Between(-25, 25);
+        this.burstFx(x, y - 20, 0x59d95e, 8);
+        const z = new Zombie(this, x, y, this.wave, isBoss);
+        this.zombies.add(z);
+        // group add resets the custom circular body, so restore it
+        if (isBoss) z.body.setCircle(34, 179 / 2 - 34, 152 * 0.92 - 40);
+        else z.body.setCircle(15, 45 / 2 - 15, 78 * 0.92 - 16);
+        this.aliveCount += 1;
+    }
+
+    onZombieDead(z) {
+        this.kills += 1;
+        this.aliveCount -= 1;
+        this.player.gainXp(z.xpValue);
+        this.burstFx(z.x, z.y - 30, 0xcc2222, z.isBoss ? 24 : 8);
+
+        if (z.isBoss) {
+            this.sound.play('sfxBossDie', { volume: 0.5 });
+            this.cameras.main.shake(300, 0.01);
+            this.spawnLoot(z.x - 30, z.y, { frame: 'food', heal: 55 });
+            this.spawnLoot(z.x + 30, z.y, { frame: 'food', heal: 55 });
+            if (!this.haveAxe) this.spawnLoot(z.x, z.y + 24, { frame: 'futou', special: 'axe' });
         } else {
-            // Resume bgm if bgm exists
-            this.bgm.resume();
+            this.sound.play('sfxKill', { volume: 0.18 });
+            const roll = Math.random();
+            if (roll < 0.22) this.spawnLoot(z.x, z.y, rollLoot());
+            else if (roll < 0.42) this.spawnLoot(z.x, z.y, { frame: 'xporb', xp: 6 + this.wave * 2 });
         }
 
-        // * reset values
-        player_hunger = 0;
-        player_thrist = 0;
+        if (this.aliveCount <= 0 && this.pendingSpawns <= 0 && !this.gameOver) {
+            this.nextWaveAt = this.time.now + 5000;
+            this.waveTimer = this.time.delayedCall(5000, () => this.startWave());
+        }
     }
 
-    update() {
-        // pass player_x and player_y to the globle variables
-        player1 = this.player1; // update global variable
-        player1_x = this.player1.x;
-        player1_y = this.player1.y;
+    spawnLoot(x, y, kind) {
+        const drop = new Loot(this, x, y, kind);
+        this.loot.add(drop);
+        drop.body.setCircle(16, drop.width / 2 - 16, drop.height * 0.9 - 16);
+        drop.special = kind.special;
+        return drop;
+    }
 
-
-
-        if (Phaser.Input.Keyboard.JustDown(keyQ)) {
-            gameOver = true;
-
-        }
-        if (Phaser.Input.Keyboard.JustDown(keyESC)) {
-            gameOver = true;
-            this.scene.start("menuScene");
-        }
-
-        // Interact button F
-        if (Phaser.Input.Keyboard.JustDown(keyF)) {
-            if (nearRiver && !openedMetabolism && !openedInventory) {
-                // drink water!
-                this.sound.play('eatsound');
-                player_thrist -= 20;
-                player_bladder_volume += 20;
-            }
-            if (nearChest) {
-                let i;
-                for (i = 0; i < chestList.length; i++) {
-                    this.close_enough = this.checkInteractionInBound(this.player1, chestList[i])
-                    if (this.close_enough && chestList[i].stock > 0) {
-                        // if chest is close to the player1
-                        this.sound.play('eatsound');
-
-                        let randomIndex = Math.floor(Math.random() * itemList.length);
-                        if (itemList[randomIndex] == "peach") {
-                            num_peach += 1;
-                        }
-                        if (itemList[randomIndex] == "cherry") {
-                            num_cherry += 1;
-                        }
-                        if (itemList[randomIndex] == "pitaya") {
-                            num_pitaya += 1;
-                        }
-                        if (itemList[randomIndex] == "watermalon") {
-                            num_watermalon += 1;
-                        }
-                        if (itemList[randomIndex] == "canned_beef") {
-                            num_canned_beef += 1;
-                        }
-                        chestList[i].stock -= 1;
-                        break;
-                    }
-                }
-            }
-
-            if (this.checkInteractionInBound(this.player1, this.axe) && !haveAxe) {
-                this.sound.play('eatsound');
-                this.sound.play('nevergonna');
-                haveAxe = true;
-            }
-
-        }
-
-        if (haveAxe) {
-            // axe follows player if close enough
-            this.axe.x = player1_x - 25;
-            this.axe.y = player1_y + 12;
-        }
-
-        if (Phaser.Input.Keyboard.JustDown(keyH)) {
-            this.sound.play('hihat');
-        }
-
-        if (Phaser.Input.Keyboard.JustDown(keyJ)) {
-            this.sound.play('bass');
-        }
-
-        if (Phaser.Input.Keyboard.JustDown(keyK)) {
-            this.sound.play('snare');
-        }
-
-
-        // press UP to pee
-        if (Phaser.Input.Keyboard.JustDown(keyUP)) {
-            pee = true;
-        }
-        // preess DOWN to poo
-        if (Phaser.Input.Keyboard.JustDown(keyDOWN)) {
-            poo = true;
-        }
-        // Press L to show player location
-        if (Phaser.Input.Keyboard.JustDown(keyL)) {
-            // console.log("x:" + this.player1.x + " y:" + this.player1.y);
-            console.log("x:" + player1_x + " y:" + player1_y);
-        }
-
-        // water area detection
-        // river1
-        if (this.player1.x >= 1300 && this.player1.x <= 1600 && this.player1.y >= 1345 && this.player1.y <= 3745) {
-            // console.log("near river!");
-            nearRiver = true;
-        } else if (this.player1.x >= 32 && this.player1.x <= 1412 && this.player1.y >= 3355 && this.player1.y <= 3745) {
-            // console.log("near river!");
-            nearRiver = true;
-        }
-
-        // river2
-        else if (this.player1.x >= 6437 && this.player1.x <= 6700 && this.player1.y >= 1345 && this.player1.y <= 3745) {
-            // console.log("near river!");
-            nearRiver = true;
-        }
-
-        else if (this.player1.x >= 5072 && this.player1.x <= 6482 && this.player1.y >= 3415 && this.player1.y <= 3760) {
-            // console.log("near river!");
-            nearRiver = true;
+    pickupLoot(drop) {
+        if (!drop.active || !this.player.alive) return;
+        if (drop.special === 'axe') {
+            this.haveAxe = true;
+            this.sound.play('sfxLevel', { volume: 0.6 });
+            this.spawnDamageText(this.player.x, this.player.y - 100, 'THE AXE! DMG +35%', '#ffe14d', 20);
+        } else if (drop.xpAmount > 0) {
+            this.player.gainXp(drop.xpAmount);
+            this.sound.play('sfxBlip', { volume: 0.35 });
+            this.spawnDamageText(drop.x, drop.y - 40, '+' + drop.xpAmount + ' XP', '#59d95e', 14);
         } else {
-            nearRiver = false;
+            this.player.heal(drop.heal);
+            this.sound.play('sfxEat', { volume: 0.5 });
+            this.spawnDamageText(drop.x, drop.y - 40, '+' + drop.heal, '#7cf58a', 16);
         }
-        //* ___________________________________________________________________________________________________________________
-        //! wall detection; hard coded; if made as a seperate function it would probably not work 
-        //! DO NOT edit this section unless you understand it!
-        //* small building1 (Left-to-right order) Top Left coordinate (x,y) =  (100, 1579)
-        this.smallBuilding1_x = 100;
-        this.smallBuilding1_y = 1580;
-
-
-        // * small building2 (Left-to-right order) Top Left (x,y)
-        this.smallBuilding2_x = 5224;
-        this.smallBuilding2_y = 1585;
-
-        // * big building1 (Left-to-right order) Top Left (x, y)
-        this.bigBuilding1_x = 2845;
-        this.bigBuilding1_y = 2997;
-
-        // * big building2  top left x = 7960 ; y = 2975
-        this.bigBuilding2_x = 7960;
-        this.bigBuilding2_y = 2997;
-
-        if (this.player1.x >= this.smallBuilding1_x && this.player1.x <= this.smallBuilding1_x + 10 && ((this.player1.y >= this.smallBuilding1_y && this.player1.y <= this.smallBuilding1_y + 107) ||
-            (this.player1.y >= this.smallBuilding1_y + 207 && this.player1.y <= this.smallBuilding1_y + 370) || (this.player1.y >= this.smallBuilding1_y + 400 && this.player1.y <= this.smallBuilding1_y + 557) ||
-            (this.player1.y >= this.smallBuilding1_y + 656 && this.player1.y <= this.smallBuilding1_y + 806))) {
-            rightIsWall = true;
-
-
-        } else if ((this.player1.x >= this.smallBuilding1_x + 559 && this.player1.x <= this.smallBuilding1_x + 569) && ((this.player1.y >= this.smallBuilding1_y && this.player1.y <= this.smallBuilding1_y + 107) ||
-            (this.player1.y >= this.smallBuilding1_y + 656 && this.player1.y <= this.smallBuilding1_y + 806)) || ((this.player1.x >= this.smallBuilding1_x + 214 && this.player1.x <= this.smallBuilding1_x + 224) &&
-                (((this.player1.y >= this.smallBuilding1_y + 435 && this.player1.y <= this.smallBuilding1_y + 563)) || (this.player1.y >= this.smallBuilding1_y + 215 && this.player1.y <= this.smallBuilding1_y + 375)))) {
-            leftIsWall = true;
-        }
-
-        else if ((this.player1.x >= this.smallBuilding1_x && this.player1.x <= this.smallBuilding1_x + 559) && (
-            (this.player1.y >= this.smallBuilding1_y + 807 && this.player1.y <= this.smallBuilding1_y + 817) || (this.player1.y >= this.smallBuilding1_y + 96 && this.player1.y <= this.smallBuilding1_y + 106))) {
-            upIsWall = true;
-        }
-
-        else if ((this.player1.x >= this.smallBuilding1_x + 46 && this.player1.x <= +230) && (
-            (this.player1.y >= this.smallBuilding1_y + 535 && this.player1.y <= this.smallBuilding1_y + 645) || (this.player1.y >= this.smallBuilding1_y && this.player1.y <= this.smallBuilding1_y + 10) ||
-            (this.player1.y >= this.smallBuilding1_y + 339 && this.player1.y <= this.smallBuilding1_y + 349))) {
-            upIsWall = true;
-        }
-        else if ((this.player1.x >= this.smallBuilding1_x && this.player1.x <= this.smallBuilding1_x + 568) && ((this.player1.y >= this.smallBuilding1_y && this.player1.y <= this.smallBuilding1_y + 10) ||
-            (this.player1.y >= this.smallBuilding1_y + 652 && this.player1.y <= this.smallBuilding1_y + 752))) {
-            downIsWall = true;
-        }
-
-        else if ((this.player1.x >= this.smallBuilding1_x + 56 && this.player1.x <= this.smallBuilding1_x + 226) && ((this.player1.y >= this.smallBuilding1_y + 223 && this.player1.y <= this.smallBuilding1_y + 233) ||
-            (this.player1.y >= this.smallBuilding1_y + 400 && this.player1.y <= this.smallBuilding1_y + 410))) {
-            downIsWall = true;
-        }
-
-        // * small building2    
-        else if (this.player1.x >= this.smallBuilding2_x && this.player1.x <= this.smallBuilding2_x + 10 && ((this.player1.y >= this.smallBuilding2_y && this.player1.y <= this.smallBuilding2_y + 107) ||
-            (this.player1.y >= this.smallBuilding2_y + 207 && this.player1.y <= this.smallBuilding2_y + 370) || (this.player1.y >= this.smallBuilding2_y + 400 && this.player1.y <= this.smallBuilding2_y + 557) ||
-            (this.player1.y >= this.smallBuilding2_y + 656 && this.player1.y <= this.smallBuilding2_y + 806))) {
-            rightIsWall = true;
-
-
-        } else if ((this.player1.x >= this.smallBuilding2_x + 559 && this.player1.x <= this.smallBuilding2_x + 569) && ((this.player1.y >= this.smallBuilding2_y && this.player1.y <= this.smallBuilding2_y + 107) ||
-            (this.player1.y >= this.smallBuilding2_y + 656 && this.player1.y <= this.smallBuilding2_y + 806)) || ((this.player1.x >= this.smallBuilding2_x + 214 && this.player1.x <= this.smallBuilding2_x + 224) &&
-                (((this.player1.y >= this.smallBuilding2_y + 435 && this.player1.y <= this.smallBuilding2_y + 563)) || (this.player1.y >= this.smallBuilding2_y + 215 && this.player1.y <= this.smallBuilding2_y + 375)))) {
-            leftIsWall = true;
-        }
-
-        else if ((this.player1.x >= this.smallBuilding2_x && this.player1.x <= this.smallBuilding2_x + 559) && (
-            (this.player1.y >= this.smallBuilding2_y + 807 && this.player1.y <= this.smallBuilding2_y + 817) || (this.player1.y >= this.smallBuilding2_y + 96 && this.player1.y <= this.smallBuilding2_y + 106))) {
-            upIsWall = true;
-        }
-
-        else if ((this.player1.x >= this.smallBuilding2_x + 46 && this.player1.x <= +230) && (
-            (this.player1.y >= this.smallBuilding2_y + 535 && this.player1.y <= this.smallBuilding2_y + 645) || (this.player1.y >= this.smallBuilding2_y && this.player1.y <= this.smallBuilding2_y + 10) ||
-            (this.player1.y >= this.smallBuilding2_y + 339 && this.player1.y <= this.smallBuilding2_y + 349))) {
-            upIsWall = true;
-        }
-        else if ((this.player1.x >= this.smallBuilding2_x && this.player1.x <= this.smallBuilding2_x + 568) && ((this.player1.y >= this.smallBuilding2_y && this.player1.y <= this.smallBuilding2_y + 10) ||
-            (this.player1.y >= this.smallBuilding2_y + 652 && this.player1.y <= this.smallBuilding2_y + 752))) {
-            downIsWall = true;
-        }
-
-        else if ((this.player1.x >= this.smallBuilding2_x + 56 && this.player1.x <= this.smallBuilding2_x + 226) && ((this.player1.y >= this.smallBuilding2_y + 223 && this.player1.y <= this.smallBuilding2_y + 233) ||
-            (this.player1.y >= this.smallBuilding2_y + 400 && this.player1.y <= this.smallBuilding2_y + 410))) {
-            downIsWall = true;
-        }
-        // * big building1  top left x = 2845; y = 2997;
-        // right is wall (this.bigBuilding1_x, this.bigBuilding1_y)  top left x = 2845; y = 2997;
-        // lowerleft 2845, 4655 
-
-        // top right 4888, 3104; lower right 4888, 4205 
-        // mid right 4173,4224; mid left 4180 4637
-        // default conditions
-        else if ((this.player1.x >= this.bigBuilding1_x && this.player1.x <= this.bigBuilding1_x + 10 && ((this.player1.y >= this.bigBuilding1_y && this.player1.y <= this.bigBuilding1_y + 1658)) ||
-            ((this.player1.x >= this.bigBuilding1_x && this.player1.x <= this.bigBuilding1_x + 10) && (this.player1.y >= this.bigBuilding1_y + 107 && this.player1.y <= this.bigBuilding1_y + 1203)) ||
-            (this.player1.x >= this.bigBuilding1_x + 2043 && this.player1.x <= this.bigBuilding1_x + 2053 && ((this.player1.y >= this.bigBuilding1_y + 107 && this.player1.y <= this.bigBuilding1_y + 1208)))
-        ) || (this.player1.x >= this.bigBuilding1_x + 1328 && this.player1.x <= this.bigBuilding1_x + 1428 && (this.player1.y >= this.bigBuilding1_y + 1227 && this.player1.y <= this.bigBuilding1_y + 1640))) {
-            rightIsWall = true;
-        }
-        // left is wall (this.bigBuilding1_x, this.bigBuilding1_y) top left x = 2925; y: from 3100 to 4195;
-        // mid left x:3692 [y:4198, 4652]
-        // top right x:3693 [y:2968 to 4652]
-        else if ((this.player1.x >= this.bigBuilding1_x + 70 && this.player1.x <= this.bigBuilding1_x + 90 && ((this.player1.y >= this.bigBuilding2_y + 95 && this.player1.y <= this.bigBuilding2_y + 1193)) ||
-            ((this.player1.x >= this.bigBuilding1_x + 847 && this.player1.x <= this.bigBuilding1_x + 857) && (this.player1.y >= this.bigBuilding2_y + 1201 && this.player1.y <= this.bigBuilding2_y + 1660)) ||
-            (this.player1.x >= this.bigBuilding1_x + 2040 && this.player1.x <= this.bigBuilding1_x + 2045 && ((this.player1.y >= this.bigBuilding2_y + 95 && this.player1.y <= this.bigBuilding2_y + 1220)))
-        ) || (this.player1.x >= this.bigBuilding1_x + 2123 && this.player1.x <= this.bigBuilding1_x + 2127 && (this.player1.y >= this.bigBuilding2_y && this.player1.y <= this.bigBuilding2_y + 1655))) {
-            leftIsWall = true;
-        }
-
-        // up is wall (this.bigBuilding1_x, this.bigBuilding1_y) : [x: 2931 to 4886, y:3106]
-        // lower x:[2863 to 3675 and 4200 to 4950 ]y : 4709 or 4661
-        else if ((this.player1.x >= this.bigBuilding1_x + 70 && this.player1.x <= this.bigBuilding1_x + 2041 && ((this.player1.y >= this.bigBuilding1_y + 111 && this.player1.y <= this.bigBuilding1_y + 115)) ||
-            ((this.player1.x >= this.bigBuilding1_x + 15 && this.player1.x <= this.bigBuilding1_x + 830) && (this.player1.y >= this.bigBuilding1_y + 1664 && this.player1.y <= this.bigBuilding1_y + 1670)) ||
-            (this.player1.x >= this.bigBuilding1_x + 1350 && this.player1.x <= this.bigBuilding1_x + 2105 && ((this.player1.y >= this.bigBuilding1_y + 1664 && this.player1.y <= this.bigBuilding1_y + 1670)))
-        )) {
-            upIsWall = true;
-        }
-
-        // down is wall (this.bigBuilding1_x, this.bigBuilding1_y) : [x: 2866 to 4955, y:2975]
-        // lower x:[x: 2920 to 3670 and 4206 to 4890, y:4193]
-        else if ((this.player1.x >= this.bigBuilding1_x + 15 && this.player1.x <= this.bigBuilding1_x + 2110 && ((this.player1.y >= this.bigBuilding1_y - 18 && this.player1.y <= this.bigBuilding1_y)) ||
-            ((this.player1.x >= this.bigBuilding1_x + 75 && this.player1.x <= this.bigBuilding1_x + 821) && (this.player1.y >= this.bigBuilding1_y + 1192 && this.player1.y <= this.bigBuilding1_y + 1200)) ||
-            (this.player1.x >= this.bigBuilding1_x + 1361 && this.player1.x <= this.bigBuilding1_x + 2050 && ((this.player1.y >= this.bigBuilding1_y + 1192 && this.player1.y <= this.bigBuilding1_y + 1200)))
-        )) {
-            downIsWall = true;
-        }
-
-        // * big building2  top left x = 7960 ; y = 2975; // altered from building2
-        else if ((this.player1.x >= this.bigBuilding2_x && this.player1.x <= this.bigBuilding2_x + 10 && ((this.player1.y >= this.bigBuilding2_y && this.player1.y <= this.bigBuilding2_y + 1658)) ||
-            ((this.player1.x >= this.bigBuilding2_x && this.player1.x <= this.bigBuilding2_x + 10) && (this.player1.y >= this.bigBuilding2_y + 107 && this.player1.y <= this.bigBuilding2_y + 1203)) ||
-            (this.player1.x >= this.bigBuilding2_x + 2043 && this.player1.x <= this.bigBuilding2_x + 2053 && ((this.player1.y >= this.bigBuilding2_y + 107 && this.player1.y <= this.bigBuilding2_y + 1208)))
-        ) || (this.player1.x >= this.bigBuilding2_x + 1328 && this.player1.x <= this.bigBuilding2_x + 1428 && (this.player1.y >= this.bigBuilding2_y + 1227 && this.player1.y <= this.bigBuilding2_y + 1640))) {
-            rightIsWall = true;
-        }
-        // left is wall (this.bigBuilding2_x, this.bigBuilding2_y)
-        else if ((this.player1.x >= this.bigBuilding2_x + 70 && this.player1.x <= this.bigBuilding2_x + 90 && ((this.player1.y >= this.bigBuilding2_y + 95 && this.player1.y <= this.bigBuilding2_y + 1193)) ||
-            ((this.player1.x >= this.bigBuilding2_x + 847 && this.player1.x <= this.bigBuilding2_x + 857) && (this.player1.y >= this.bigBuilding2_y + 1201 && this.player1.y <= this.bigBuilding2_y + 1660)) ||
-            (this.player1.x >= this.bigBuilding2_x + 2040 && this.player1.x <= this.bigBuilding2_x + 2045 && ((this.player1.y >= this.bigBuilding2_y + 95 && this.player1.y <= this.bigBuilding2_y + 1220)))
-        ) || (this.player1.x >= this.bigBuilding2_x + 2123 && this.player1.x <= this.bigBuilding2_x + 2127 && (this.player1.y >= this.bigBuilding2_y && this.player1.y <= this.bigBuilding2_y + 1655))) {
-            leftIsWall = true;
-        }
-
-        // up is wall (this.bigBuilding2_x, this.bigBuilding2_y) : [x: 2931 to 4886, y:3106]
-        // lower x:[2863 to 3675 and 4200 to 4950 ]y : 4709 or 4661
-        else if ((this.player1.x >= this.bigBuilding2_x + 80 && this.player1.x <= this.bigBuilding2_x + 2041 && ((this.player1.y >= this.bigBuilding2_y + 111 && this.player1.y <= this.bigBuilding2_y + 115)) ||
-            ((this.player1.x >= this.bigBuilding2_x + 15 && this.player1.x <= this.bigBuilding2_x + 830) && (this.player1.y >= this.bigBuilding2_y + 1664 && this.player1.y <= this.bigBuilding2_y + 1670)) ||
-            (this.player1.x >= this.bigBuilding2_x + 1350 && this.player1.x <= this.bigBuilding2_x + 2105 && ((this.player1.y >= this.bigBuilding2_y + 1664 && this.player1.y <= this.bigBuilding2_y + 1670)))
-        )) {
-            upIsWall = true;
-        }
-
-        // down is wall (this.bigBuilding2_x, this.bigBuilding2_y) : [x: 2866 to 4955, y:2975]
-        // lower x:[x: 2920 to 3670 and 4206 to 4890, y:4193]
-        else if ((this.player1.x >= this.bigBuilding2_x + 15 && this.player1.x <= this.bigBuilding2_x + 2110 && ((this.player1.y >= this.bigBuilding2_y - 18 && this.player1.y <= this.bigBuilding2_y)) ||
-            ((this.player1.x >= this.bigBuilding2_x + 75 && this.player1.x <= this.bigBuilding2_x + 821) && (this.player1.y >= this.bigBuilding2_y + 1192 && this.player1.y <= this.bigBuilding2_y + 1200)) ||
-            (this.player1.x >= this.bigBuilding2_x + 1361 && this.player1.x <= this.bigBuilding2_x + 2050 && ((this.player1.y >= this.bigBuilding2_y + 1192 && this.player1.y <= this.bigBuilding2_y + 1200)))
-        )) {
-            downIsWall = true;
-        }
-
-
-        else {
-            // Reset all direction booleans
-            upIsWall = false;
-            downIsWall = false;
-            leftIsWall = false;
-            rightIsWall = false;
-        }
-        //* end of hardcoded section-----------------------------------------------------------------------------------------------------------------
-
-        //* Player stat detection
-        if (player_exhausted) {
-            if (exhausted_countdown > 0) {
-                exhausted_countdown -= 1;
-                player_exhausted = true;
-
-            } else {
-                exhausted_countdown = init_exhausted_countdown;
-                player_stamina = 1; // to get out of infinate loop
-                player_exhausted = false;
-            }
-        } else if (pee) {
-            if (pee_countdown > 0) {
-                pee_countdown -= 1;
-                pee = true;
-
-            } else {
-                pee_countdown = init_countdown;
-                if (player_bladder_volume >= 100) { // full bladder penalty
-                    player_hp -= 30; //!was 10
-                }
-                player_bladder_volume = 0; // empty bladder
-                pee = false;
-            }
-
-        } else if (poo) {
-            if (poo_countdown > 0) {
-                poo_countdown -= 1;
-                poo = true;
-
-            } else {
-                poo_countdown = init_countdown;
-                if (player_stomach_volume >= 100) { // full stomach penalty
-                    player_hp -= 30;
-                }
-                player_stomach_volume = 0; // empty stomach; well it is a compomise
-
-                poo = false;
-            }
-        }
-        else if (!gameOver) {
-            // not exhausted 
-            //***  player movement control:W S A D
-            // is Down = keep pressed down
-            if (keyA.isDown && this.player1.x >= borderUISize && !leftIsWall) {
-                if (keyShift.isDown) {
-                    // speed up if boost
-                    this.player1.x -= this.player1.runspeed;
-                    this.player1.anims.play('walkleft').scaleX = 1; //! Note: use scaleX to flip animation
-                    // running loses more stamina
-                    player_stamina -= 2;
-                } else {
-                    this.player1.x -= this.player1.walkspeed;
-                    this.player1.anims.play('walkleft').scaleX = 1;
-                    player_stamina -= 1;
-                }
-
-            } else if (keyD.isDown && this.player1.x < borderLimitUp_x && !rightIsWall) {
-                if (keyShift.isDown) {
-                    // speed up if boost
-                    this.player1.x += this.player1.runspeed;
-                    this.player1.anims.play('walkright').scaleX = -1;
-                    // running loses more stamina
-                    player_stamina -= 2;
-                } else {
-                    this.player1.x += this.player1.walkspeed;
-                    this.player1.anims.play('walkright').scaleX = -1;
-                    player_stamina -= 1;
-                }
-            }
-            if (keyW.isDown && this.player1.y >= borderLimitUp_y && !upIsWall) {
-                if (keyShift.isDown) {
-                    // speed up if boost
-                    this.player1.y -= this.player1.runspeed;
-                    //this.player1.anims.play('go-up');
-                    // running loses more stamina
-                    player_stamina -= 2;
-                } else {
-                    this.player1.y -= this.player1.walkspeed;
-                    // this.player1.anims.play('go-up');
-                    player_stamina -= 1;
-                }
-            } else if (keyS.isDown && this.player1.y <= borderLimitDown_y - 2 && !downIsWall) { // 2 is the offset
-                if (keyShift.isDown) {
-                    // speed up if boost
-                    this.player1.y += this.player1.runspeed;
-                    // this.player1.anims.play('go-down');
-                    // running loses more stamina
-                    player_stamina -= 2;
-                } else {
-                    this.player1.y += this.player1.walkspeed;
-                    // player1.anims.play('go-down');
-                    player_stamina -= 1;
-                }
-            }
-            // *** while game is not over ***
-            this.player1.update();             // update this.player1
-
-            // * check chests
-            let j;
-            for (j = 0; j < chestList.length; j++) {
-                if (this.checkInteractionInBound(this.player1, chestList[j]) && chestList[j].stock > 0) {
-                    // if chest is close to the player1
-                    nearChest = true;
-                    break; // exit for loop
-                } else {
-                    nearChest = false;
-                }
-                // console.log("nearChest: " + nearChest);
-            }
-
-
-            this.mainmap.tilePositionX -= 0;  // update tile sprite
-        } else if(gameOver){
-            // this.bgmPlayed = false;
-        }
-        if (gameOver || Phaser.Input.Keyboard.JustDown(keyP)) {
-            // press p to toggle on/off bgm
-            if (this.bgmCreated) {
-                if (this.bgmPlayed || gameOver) {
-                    this.bgm.volume = 0;
-                    this.bgmPlayed = false;
-                } else if (!this.bgmPlayed){
-                    this.bgm.volume = 0.3;
-                    this.bgmPlayed = true;
-                }
-            }
-            //console.log("this.bgm.volume:" + this.bgm.volume);
-
-        }
-        // ** Send events to UI.js
-        if (Phaser.Input.Keyboard.JustDown(keyTAB) || Phaser.Input.Keyboard.JustDown(keyI) || Phaser.Input.Keyboard.JustDown(key1)) {
-            //  Dispatch openInventory event
-            this.sound.play('switchsound');
-            this.events.emit('openInventory');
-        }
-
-        if (Phaser.Input.Keyboard.JustDown(keyM) || Phaser.Input.Keyboard.JustDown(key3)) {
-            //console.log("Pressed M");
-            this.sound.play('switchsound');
-            //  Dispatch openMetabolism  event
-            this.events.emit('openMetabolism');
-            // console.log("EVENT openMetabolism dispatched");
-        }
-        if (Phaser.Input.Keyboard.JustDown(keyT) || Phaser.Input.Keyboard.JustDown(key4)) {
-            this.sound.play('switchsound');
-            this.events.emit('openTutorial');
-            // console.log("EVENT openTutorial dispatched");
-
-        }
-
-
-        if (restartPlay) { //!condition Phaser.Input.Keyboard.JustDown(keyR) may be redundant
-            console.log("Restarting game...");
-            this.sound.play('switchsound');
-            if (this.bgmCreated) {
-                this.bgm.pause()
-                this.bgmPlayed = false;
-            }
-            restartPlay = false;
-            gameOver = true;
-            this.scene.restart();
-            // clear event flag
-        }
-
-        // new weapon
-        if (this.superWeaponCount > 0 && Phaser.Input.Keyboard.JustDown(keyV)) { // if pressed v for superweapon
-            let ships = [
-                this.ship01,
-                this.ship02,
-                this.ship03,
-                this.ship04
-            ];
-
-            let randomShip = ships[Math.floor(Math.random() * ships.length)];
-            //this.player1.reset();
-            this.shipExplode2(randomShip);
-            this.superWeaponCount -= 1;
-        }
-
-        // check collisions
-
-
+        drop.destroy();
     }
 
-    render() {
-        /* mouse debug
-        this.debug.text("Left Button: " + game.input.activePointer.leftButton.isDown, 300, 132);
-        this.debug.text("Middle Button: " + game.input.activePointer.middleButton.isDown, 300, 196);
-        this.debug.text("Right Button: " + game.input.activePointer.rightButton.isDown, 300, 260);
-        */
+    onPlayerDead() {
+        this.gameOver = true;
+        if (this.spawnEvent) this.spawnEvent.remove();
+        if (this.waveTimer) this.waveTimer.remove();
+        // record the best run
+        try {
+            const best = JSON.parse(localStorage.getItem('stf-best') || '{}');
+            if (!best.kills || this.kills > best.kills) {
+                localStorage.setItem('stf-best', JSON.stringify({
+                    kills: this.kills, wave: this.wave, time: Math.floor(this.elapsed)
+                }));
+            }
+        } catch (e) { /* storage unavailable — fine */ }
     }
 
+    // ------------------------------------------------------- update ----
 
-    /******************************************************
-    * Module-level funcions defined below
-    *******************************************************/
-    formatTime(seconds) {
-        // Minutes
-        var minutes = Math.floor(seconds / 60);
-        // Seconds
-        var partInSeconds = seconds % 60;
-        // Adds left zeros to seconds
-        partInSeconds = partInSeconds.toString().padStart(2, '0');
-        // Returns formated time
-        return `${minutes}:${partInSeconds}`;
-    }
+    update(time, delta) {
+        const p = this.player;
 
+        if (!this.gameOver) this.elapsed = (time - this.startTime) / 1000;
 
+        // merge joystick + keyboard movement
+        let mx = this.uiMove.x, my = this.uiMove.y;
+        if (this.keys.A.isDown || this.cursors.left.isDown) mx -= 1;
+        if (this.keys.D.isDown || this.cursors.right.isDown) mx += 1;
+        if (this.keys.W.isDown || this.cursors.up.isDown) my -= 1;
+        if (this.keys.S.isDown || this.cursors.down.isDown) my += 1;
+        p.moveVec.set(Phaser.Math.Clamp(mx, -1, 1), Phaser.Math.Clamp(my, -1, 1));
 
-    checkCollision(player, item) { //!FIXME rewrite this !
-        // simple AABB checking
-        if (player.x < item.x + item.width &&
-            player.x + player.width > item.x &&
-            player.y < item.y + item.height &&
-            player.height + player.y > item.y) {
-            return true;
-        } else {
-            return false;
+        if (this.attackHeld || this.keys.SPACE.isDown) p.tryAttack();
+        if (Phaser.Input.Keyboard.JustDown(this.keys.SHIFT)) p.tryDash();
+        if (Phaser.Input.Keyboard.JustDown(this.keys.E)) p.tryGun();
+
+        p.update(time, delta);
+
+        // auto-open chests on approach
+        for (const chest of this.chests) {
+            if (!chest.opened &&
+                Phaser.Math.Distance.Between(p.x, p.y, chest.x, chest.y) < 75) {
+                chest.open();
+            }
         }
-    }
-
-    checkInteractionInBound(player, item) { //!fix me 
-        this.interactionRange = 60;
-        this.distance = Phaser.Math.Distance.BetweenPoints(player, item);
-
-        if (this.distance <= this.interactionRange) {
-            //console.log("Interaction in range: " + this.distance);
-            return true;
-        } else {
-            return false;
-        }
-
-    }
-
-    shipExplode(ship) {
-        // temporarily hide ship
-        ship.alpha = 0;
-        // create explosion sprite at ship's position
-        let boom = this.add.sprite(ship.x, ship.y, 'explosion').setOrigin(0, 0);
-        boom.anims.play('explode');             // play explode animation
-        boom.on('animationcomplete', () => {    // callback after anim completes
-            ship.reset();                         // reset ship position
-            ship.alpha = 1;                       // make ship visible again
-            boom.destroy();                       // remove explosion sprite
-        });
-
-    }
-
-    shipExplode2(ship) {
-        // temporarily hide ship
-        ship.alpha = 0;
-        // create explosion sprite at ship's position
-        let boom2 = this.add.sprite(ship.x, ship.y, 'explosion').setOrigin(0, 0);
-        boom2.anims.play('explode2');             // play explode animation
-        boom2.on('animationcomplete', () => {    // callback after anim completes
-            ship.reset();                         // reset ship position
-            ship.alpha = 1;                       // make ship visible again
-            boom2.destroy();                       // remove explosion sprite
-        });
-
-        let soundFXLib = [
-            'sfx_explosion_spell',
-            'sfx_explosion_sea-mine',
-            'sfx_explosion_shot-light',
-            'sfx_explosion_crash'
-        ];
-        let random4SoundFX = Math.floor(Math.random() * soundFXLib.length);
-        this.explosionFX = this.sound.add(soundFXLib[random4SoundFX], { volume: 0.1 });
-        this.explosionFX.play();
-        // add time bonus
     }
 }
-
